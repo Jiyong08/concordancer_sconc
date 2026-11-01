@@ -2157,7 +2157,14 @@ fn serve_static_file(path: &Path, content_type: &str) -> Response<std::io::Curso
         Ok(bytes) => {
             let header =
                 Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes()).unwrap();
-            Response::from_data(bytes).with_header(header)
+            let no_cache =
+                Header::from_bytes(&b"Cache-Control"[..], &b"no-cache, no-store, must-revalidate"[..]).unwrap();
+            let pragma =
+                Header::from_bytes(&b"Pragma"[..], &b"no-cache"[..]).unwrap();
+            Response::from_data(bytes)
+                .with_header(header)
+                .with_header(no_cache)
+                .with_header(pragma)
         }
         Err(_) => Response::from_string("404 Not Found").with_status_code(StatusCode(404)),
     }

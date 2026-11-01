@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>sconc v0.1 — 한국어 통시·공시 다층 말뭉치 통합 검색기</title>
-  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/styles.css?v=2" />
 </head>
 <body>
   <div class="app-shell ratio-full" id="app-shell">
@@ -116,6 +116,9 @@
                 <option value="batang">바탕체 (시스템 명조)</option>
               </select>
             </div>
+            <button type="button" class="btn btn-primary" id="btn-quick-goto-builder" style="padding:6px 14px; font-size:0.8rem; font-weight:700; background:#059669; border-color:#059669;" title="사용자가 지정한 원본 폴더 및 하위 모든 텍스트로부터 새로운 말뭉치 데이터베이스를 생성합니다.">
+              📁 말뭉치 폴더 지정 DB 생성
+            </button>
           </div>
 
           <!-- 아랫줄 (Row 2): 검색어 입력 및 실행/종료 버튼 -->
@@ -256,8 +259,16 @@
           <div style="padding:16px 20px; overflow-y:auto; flex:1;">
             <div class="builder-form-card">
               <div class="builder-form-row">
-                <label for="builder-folder-path"><strong>말뭉치 폴더 절대/상대 경로:</strong></label>
-                <input type="text" id="builder-folder-path" value="c:\AG\concordance\sample" placeholder="예: c:\AG\concordance\sample 또는 원하는 말뭉치 폴더" />
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                  <label for="builder-folder-path"><strong>말뭉치 폴더 절대/상대 경로:</strong></label>
+                  <button type="button" class="btn btn-outline" id="btn-fill-sample-folder" style="padding:2px 8px; font-size:0.75rem;">
+                    ⚡ sample 폴더 경로 자동 채우기
+                  </button>
+                </div>
+                <input type="text" id="builder-folder-path" value="c:\AG\concordance\sample" placeholder="예: c:\AG\concordance\sample 또는 원하는 말뭉치 폴더 경로" />
+                <span style="font-size:0.75rem; color:#475569;">
+                  ※ 지정한 폴더 및 <strong>모든 하위 폴더(Subdirectories) 내의 텍스트(.txt, .xml, .json 등)를 재귀적으로 자동 탐색</strong>하여 변환합니다.
+                </span>
               </div>
               <div class="builder-form-row">
                 <label for="builder-db-name"><strong>생성/저장할 DB 파일명:</strong></label>
@@ -577,7 +588,7 @@
     </div>
   </div>
 
-  <script src="/hangul_automata.js"></script>
-  <script src="/app.js"></script>
+  <script src="/hangul_automata.js?v=2"></script>
+  <script src="/app.js?v=2"></script>
 </body>
 </html>

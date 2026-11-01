@@ -17,6 +17,7 @@ import re
 import json
 import sqlite3
 import unicodedata
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 
@@ -540,6 +541,229 @@ def parse_plain_or_script(file_path: str, enc: str):
 # ==============================================================================
 # 폴더 단위 지능형 스캔 및 자동 연동/변환 총괄 함수
 # ==============================================================================
+
+def parse_braa0001_triplet(bt_path, bs_path, bg_path, code="AA0001"):
+    with open(bt_path, "r", encoding="utf-16-le", errors="ignore") as f:
+        bt_lines = [l.rstrip("\r\n") for l in f]
+    with open(bs_path, "r", encoding="utf-16-le", errors="ignore") as f:
+        bs_lines = [l.rstrip("\r\n") for l in f]
+    with open(bg_path, "r", encoding="utf-16-le", errors="ignore") as f:
+        bg_lines = [l.rstrip("\r\n") for l in f]
+
+    bg_records = []
+    in_body = False
+    cur_sent = None
+    cur_tree_lines = []
+    for l in bg_lines:
+        s = l.strip()
+        if "<text><body>" in s or "<body>" in s:
+            in_body = True
+            continue
+        if not in_body or "</body>" in s:
+            continue
+        if s.startswith(";"):
+            m = re.match(r"^;\s*([A-Za-z0-9_]+)\s*(.*)$", s)
+            if m:
+                if cur_sent is not None:
+                    bg_records.append((cur_sent, "\n".join(cur_tree_lines).strip()))
+                    cur_tree_lines = []
+                cur_sent = m.group(2).strip()
+            continue
+        if cur_sent is not None and s:
+            cur_tree_lines.append(l)
+    if cur_sent is not None:
+        bg_records.append((cur_sent, "\n".join(cur_tree_lines).strip()))
+
+    bs_map = {}
+    for l in bs_lines:
+        if "\t" in l and l.startswith("BS"):
+            p = l.split("\t")
+            if "-" in p[0]:
+                bs_map[p[0].split("-")[1]] = p[2]
+
+    eojeols = []
+    cur_tag = "body"
+    cur_date = ""
+    cur_page = ""
+    for l in bt_lines:
+        s = l.strip()
+        if s in ("<date>", "<page>", "<head>", "<p>"):
+            cur_tag = s[1:-1]
+        elif "\t" in l and l.startswith("BT"):
+            p = l.split("\t")
+            if "-" in p[0]:
+                num = p[0].split("-")[1]
+                if cur_tag == "date":
+                    cur_date = p[1]
+                elif cur_tag == "page":
+                    cur_page = p[1]
+                eojeols.append({
+                    "num": num,
+                    "bt_id": p[0],
+                    "word": p[1],
+                    "morph": p[2],
+                    "sense": bs_map.get(num, ""),
+                    "tag": cur_tag,
+                    "page_info": f"{cur_date} p.{cur_page}".strip()
+                })
+
+    def norm(s):
+        return re.sub(r"[\s`'\"“”‘’().,?!…\-]+", "", s)
+
+    char_stream = []
+    char_to_eojeol = []
+    for idx, e in enumerate(eojeols):
+        w = norm(e["word"])
+        for ch in w:
+            char_stream.append(ch)
+            char_to_eojeol.append(idx)
+
+    full_chars = "".join(char_stream)
+    c_pos = 0
+    segments = []
+    for s_idx, (bg_sent, tree_str) in enumerate(bg_records, 1):
+        t = norm(bg_sent)
+        if not t:
+            e_start = char_to_eojeol[min(c_pos, len(char_to_eojeol) - 1)] if char_to_eojeol else 0
+            chunk = eojeols[e_start:e_start + 1]
+        else:
+            suffix = t[-min(len(t), 6):]
+            expected_end = c_pos + len(t)
+            search_from = max(c_pos + 1, expected_end - 25)
+            search_to = min(len(full_chars), expected_end + 25)
+            window = full_chars[search_from:search_to]
+            best_end = None
+            best_dist = 999999
+            start_search = 0
+            while True:
+                idx = window.find(suffix, start_search)
+                if idx == -1:
+                    break
+                cand_end = search_from + idx + len(suffix)
+                dist = abs(cand_end - expected_end)
+                if dist < best_dist:
+                    best_dist = dist
+                    best_end = cand_end
+                start_search = idx + 1
+            end_c = best_end if best_end is not None else min(len(full_chars), expected_end)
+            e_start = char_to_eojeol[min(c_pos, len(char_to_eojeol) - 1)] if char_to_eojeol else 0
+            e_end = (char_to_eojeol[min(max(c_pos, end_c - 1), len(char_to_eojeol) - 1)] + 1) if char_to_eojeol else 0
+            chunk = eojeols[e_start:e_end]
+            c_pos = end_c
+
+        reconstructed_raw = " ".join(x["word"] for x in chunk) if chunk else bg_sent
+        morph_flat = " | ".join(f"{x['word']}[{x['morph']}]" for x in chunk)
+        sense_flat = " | ".join(f"{x['word']}[{x['sense']}]" for x in chunk)
+        eojeol_json_str = json.dumps([
+            {"id": x["bt_id"], "word": x["word"], "morph": x["morph"], "sense": x["sense"]}
+            for x in chunk
+        ], ensure_ascii=False)
+
+        segments.append({
+            "sent_id_str": f"BR{code}-S{s_idx:04d}",
+            "part_type": chunk[0]["tag"] if chunk else "p",
+            "lang": "kor",
+            "page_info": chunk[0]["page_info"] if chunk else "",
+            "text_raw": reconstructed_raw,
+            "morph_flat": morph_flat,
+            "sense_flat": sense_flat,
+            "syntax_tree": tree_str,
+            "eojeols_json": eojeol_json_str,
+            "eojeol_cnt": len(chunk)
+        })
+
+    doc_info = {
+        "doc_id": f"BR{code}_LINKED",
+        "title": f"세종 3중 연동 말뭉치 (BR{code}) [형태·형태의미·구문]",
+        "author": "국립국어원",
+        "pub_year": "1993",
+        "corpus_category": "다층 통합 말뭉치 (형태+의미+구문)",
+        "annotation_layers": f"원문 + 형태소분석(BT{code}) + 어휘의미분석(BS{code}) + 구문분석(BG{code})"
+    }
+    file_records = [
+        {
+            "file_name": os.path.basename(bt_path),
+            "file_size_bytes": os.path.getsize(bt_path),
+            "original_encoding": "UTF-16LE (with BOM)",
+            "text_format": "TEI.2 SGML/XML + TSV (3열)",
+            "corpus_type": "형태 분석 말뭉치 (세종 문어)",
+            "raw_notation_desc": "<p>, <head> 내 '어절ID \t 어절원문 \t 형태소분석' 2번째 열에 표기",
+            "analysis_notation_desc": "3번째 열에 '형태소/품사 + ...' 표기",
+            "imported_sentences": len(segments),
+            "imported_eojeols": sum(s["eojeol_cnt"] for s in segments),
+            "note": "동일 원문 기반 3중 통합 연동"
+        },
+        {
+            "file_name": os.path.basename(bs_path),
+            "file_size_bytes": os.path.getsize(bs_path),
+            "original_encoding": "UTF-16LE (with BOM)",
+            "text_format": "TEI.2 SGML/XML + TSV (3열)",
+            "corpus_type": "형태의미 분석 말뭉치 (세종 문어)",
+            "raw_notation_desc": "<p>, <head> 내 '어절ID \t 어절원문 \t 의미분석' 2번째 열에 표기",
+            "analysis_notation_desc": "표준국어대사전 어깨번호 '__02/NNG' 표기",
+            "imported_sentences": len(segments),
+            "imported_eojeols": sum(s["eojeol_cnt"] for s in segments),
+            "note": "동일 원문 기반 3중 통합 연동"
+        },
+        {
+            "file_name": os.path.basename(bg_path),
+            "file_size_bytes": os.path.getsize(bg_path),
+            "original_encoding": "UTF-16LE (with BOM)",
+            "text_format": "TEI.2 SGML/XML + S-식 구문 트리",
+            "corpus_type": "구문 분석 말뭉치 (세종 트리뱅크)",
+            "raw_notation_desc": "세미콜론('; ')으로 시작하는 주석 행에 전체 문장 원문 표기",
+            "analysis_notation_desc": "소괄호 중첩 S-식 트리 구문 표지",
+            "imported_sentences": len(segments),
+            "imported_eojeols": sum(s["eojeol_cnt"] for s in segments),
+            "note": "동일 원문 기반 3중 통합 연동"
+        }
+    ]
+    return doc_info, file_records, segments
+
+def parse_learner_xml(xml_path, doc_id_prefix):
+    tree = ET.parse(xml_path)
+    root = tree.getroot()
+    header = root.find("Header")
+    theme = header.findtext("AssignmentTheme", "") if header is not None else ""
+    nat = header.findtext(".//Nationality", "") if header is not None else ""
+    grade = header.findtext(".//DataGrade", "") if header is not None else ""
+
+    segments = []
+    s_idx = 0
+    for sent_el in root.findall(".//SENTENCE"):
+        s_idx += 1
+        raw_s = (sent_el.findtext("s") or "").strip()
+        words_data = []
+        morph_flat_parts = []
+        for w_idx, w_el in enumerate(sent_el.findall(".//word"), 1):
+            w_form = (w_el.findtext("w") or "").strip()
+            m_items = []
+            for m_el in w_el.findall("morph"):
+                m_form = (m_el.text or "").strip()
+                m_pos = m_el.attrib.get("pos", "")
+                m_items.append(f"{m_form}/{m_pos}")
+            m_str = " + ".join(m_items)
+            morph_flat_parts.append(f"{w_form}[{m_str}]")
+            words_data.append({
+                "id": f"W{w_idx}",
+                "word": w_form,
+                "morph": m_str,
+                "sense": ""
+            })
+        segments.append({
+            "sent_id_str": f"{doc_id_prefix}-S{s_idx:03d}",
+            "part_type": "main",
+            "lang": "kor",
+            "page_info": f"{nat}/{grade}",
+            "text_raw": raw_s,
+            "morph_flat": " | ".join(morph_flat_parts),
+            "sense_flat": "",
+            "syntax_tree": "",
+            "eojeols_json": json.dumps(words_data, ensure_ascii=False),
+            "eojeol_cnt": len(words_data)
+        })
+    return theme, nat, grade, segments
+
 def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, progress_callback=None):
     """
     사용자가 지정한 폴더를 분석하여 최적의 데이터베이스를 구축합니다.
@@ -548,7 +772,17 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
         raise FileNotFoundError(f"지정한 폴더가 존재하지 않습니다: {folder_path}")
 
     folder = Path(folder_path)
-    all_files = [f for f in folder.iterdir() if f.is_file()]
+    valid_exts = {".txt", ".xml", ".json", ".sgml", ".tei", ".csv", ".tsv"}
+    all_files = [
+        f for f in folder.rglob("*")
+        if f.is_file() and f.suffix.lower() in valid_exts and not f.name.startswith(".")
+    ]
+    if not all_files:
+        ignore_exts = {".corpdb", ".db", ".sqlite", ".sqlite3", ".zip", ".exe", ".dll", ".ttf", ".otf", ".png", ".jpg", ".pdf"}
+        all_files = [
+            f for f in folder.rglob("*")
+            if f.is_file() and not f.name.startswith(".") and f.suffix.lower() not in ignore_exts
+        ]
     if not all_files:
         raise ValueError(f"폴더 내에 파일이 없습니다: {folder_path}")
 
@@ -583,7 +817,7 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
             if progress_callback:
                 progress_callback(f"세종 3중 연동 말뭉치 감지 (코드 {code}): BTAA+BSAA+BGAA 처리 중...")
             
-            from build_sample_db import parse_braa0001_triplet
+            # self-contained
             doc_info, file_records, segments = parse_braa0001_triplet(
                 str(kmap["BT"]), str(kmap["BS"]), str(kmap["BG"]), code
             )
@@ -617,7 +851,7 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
             if "<Korean_Learners_Corpus>" in sample_xml or "<AssignmentTheme>" in sample_xml:
                 if progress_callback:
                     progress_callback(f"학습자 연동 말뭉치 감지: {base}.txt + {base}.xml 처리 중...")
-                from build_sample_db import parse_learner_xml
+                # self-contained
                 theme, nat, grade, segs = parse_learner_xml(str(extmap["xml"]), base.upper().replace("-", "_"))
                 doc_info = {
                     "doc_id": f"{base.upper().replace('-', '_')}_LINKED",
@@ -733,7 +967,7 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
             elif "<Korean_Learners_Corpus>" in sample_str or "<SENTENCE>" in sample_str:
                 if progress_callback:
                     progress_callback(f"학습자 형태 주석 XML 감지: {fname} 처리 중...")
-                from build_sample_db import parse_learner_xml
+                # self-contained
                 theme, nat, grade, segs = parse_learner_xml(str(f), f.stem.upper().replace("-", "_"))
                 doc_info = {
                     "doc_id": f"LEARNER_{f.stem.upper().replace('-', '_')}",

@@ -437,7 +437,23 @@
       })
       .join('');
 
-    kwicTabsBar.querySelectorAll('.kwic-tab').forEach((el) => {
+    kwicTabsBar.innerHTML += `
+      <div class="kwic-tab kwic-tab-add" id="btn-add-search-tab" title="새로운 검색 탭 열기" style="background:#e0e7ff; color:#3730a3; font-weight:700; border:1px dashed #6366f1;">
+        + 새 검색
+      </div>
+    `;
+
+    const btnAddTab = document.getElementById('btn-add-search-tab');
+    if (btnAddTab) {
+      btnAddTab.addEventListener('click', () => {
+        searchInput.value = '';
+        automata.reset();
+        searchInput.focus();
+        runSearch();
+      });
+    }
+
+    kwicTabsBar.querySelectorAll('.kwic-tab:not(.kwic-tab-add)').forEach((el) => {
       el.addEventListener('click', (e) => {
         if (e.target.classList.contains('kwic-tab-close')) return;
         switchTab(el.dataset.tabId);
@@ -900,7 +916,21 @@
       builderResultArea.style.display = 'block';
 
       // Reload overview to reflect newly added documents in dropdowns and tables
-      await loadOverview();
+      await   const btnQuickGotoBuilder = document.getElementById('btn-quick-goto-builder');
+  if (btnQuickGotoBuilder) {
+    btnQuickGotoBuilder.addEventListener('click', () => {
+      document.querySelector('.nav-tab[data-tab="tab-build-db"]').click();
+    });
+  }
+  const btnFillSampleFolder = document.getElementById('btn-fill-sample-folder');
+  if (btnFillSampleFolder) {
+    btnFillSampleFolder.addEventListener('click', () => {
+      if (builderFolderPath) builderFolderPath.value = 'c:\\AG\\concordance\\sample';
+      if (builderDbName) builderDbName.value = 'concordance.corpdb';
+    });
+  }
+
+  loadOverview();
     } catch (err) {
       btnStartBuild.disabled = false;
       builderStatusBadge.style.display = 'none';
@@ -1215,6 +1245,20 @@
       el.addEventListener('click', () => {
         loadSegmentDetail(el.dataset.seg);
       });
+    });
+  }
+
+    const btnQuickGotoBuilder = document.getElementById('btn-quick-goto-builder');
+  if (btnQuickGotoBuilder) {
+    btnQuickGotoBuilder.addEventListener('click', () => {
+      document.querySelector('.nav-tab[data-tab="tab-build-db"]').click();
+    });
+  }
+  const btnFillSampleFolder = document.getElementById('btn-fill-sample-folder');
+  if (btnFillSampleFolder) {
+    btnFillSampleFolder.addEventListener('click', () => {
+      if (builderFolderPath) builderFolderPath.value = 'c:\\AG\\concordance\\sample';
+      if (builderDbName) builderDbName.value = 'concordance.corpdb';
     });
   }
 
