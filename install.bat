@@ -73,7 +73,9 @@ if not exist "%GLOBAL_BIN_DIR%" mkdir "%GLOBAL_BIN_DIR%"
     echo "%SCRIPT_DIR%engine\target\release\sconc.exe" --port 8787 --open %%*
 ) > "%GLOBAL_BIN_DIR%\sconc.cmd"
 
-echo   - 전역 명령어 등록 완료: "%GLOBAL_BIN_DIR%\sconc.cmd"
+powershell -Command "$curr = [Environment]::GetEnvironmentVariable('Path', 'User'); $target = '%SCRIPT_DIR%'.TrimEnd('\'); if ($curr -notlike ('*' + $target + '*')) { [Environment]::SetEnvironmentVariable('Path', $curr + ';' + $target, 'User') }"
+
+echo   - 전역 명령어 등록 완료: "%GLOBAL_BIN_DIR%\sconc.cmd" 및 사용자 PATH 등록
 echo   - 이제 컴퓨터 어느 폴더의 명령 프롬프트나 터미널에서든 'sconc'를 입력하면 검색기가 실행됩니다!
 echo.
 echo ================================================================
