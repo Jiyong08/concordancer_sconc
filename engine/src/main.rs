@@ -29,7 +29,7 @@ struct MemoryProfile {
 
 impl MemoryProfile {
     fn detect() -> Self {
-        let mut sys = System::new_all();
+        let mut sys = System::new();
         sys.refresh_memory();
         let total_bytes = sys.total_memory();
         let avail_bytes = sys.available_memory();
@@ -947,7 +947,7 @@ fn handle_overview(state: &AppState) -> Response<std::io::Cursor<Vec<u8>>> {
     let db_size_bytes = fs::metadata(&state.db_path).map(|m| m.len()).unwrap_or(0);
 
     let resp = OverviewResponse {
-        memory_profile: MemoryProfile::detect(),
+        memory_profile: state.memory_profile.clone(),
         db_path: state.db_path.to_string_lossy().into_owned(),
         db_size_bytes,
         total_documents: documents.len(),

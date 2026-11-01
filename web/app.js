@@ -916,21 +916,7 @@
       builderResultArea.style.display = 'block';
 
       // Reload overview to reflect newly added documents in dropdowns and tables
-      await   const btnQuickGotoBuilder = document.getElementById('btn-quick-goto-builder');
-  if (btnQuickGotoBuilder) {
-    btnQuickGotoBuilder.addEventListener('click', () => {
-      document.querySelector('.nav-tab[data-tab="tab-build-db"]').click();
-    });
-  }
-  const btnFillSampleFolder = document.getElementById('btn-fill-sample-folder');
-  if (btnFillSampleFolder) {
-    btnFillSampleFolder.addEventListener('click', () => {
-      if (builderFolderPath) builderFolderPath.value = 'c:\\AG\\concordance\\sample';
-      if (builderDbName) builderDbName.value = 'concordance.corpdb';
-    });
-  }
-
-  loadOverview();
+      await loadOverview();
     } catch (err) {
       btnStartBuild.disabled = false;
       builderStatusBadge.style.display = 'none';
