@@ -1236,6 +1236,25 @@ fn find_char_subslice(haystack: &[char], needle: &[char]) -> Option<(usize, usiz
     None
 }
 
+fn find_all_char_subslices(haystack: &[char], needle: &[char]) -> Vec<(usize, usize)> {
+    let mut matches = Vec::new();
+    if needle.is_empty() || needle.len() > haystack.len() {
+        return matches;
+    }
+    let first = needle[0];
+    let max_start = haystack.len() - needle.len();
+    for i in 0..=max_start {
+        if haystack[i] == first && &haystack[i..i + needle.len()] == needle {
+            matches.push((i, i + needle.len()));
+        }
+    }
+    matches
+}
+
+fn is_jongseong_jamo(c: char) -> bool {
+    matches!(c, '\u{11A8}'..='\u{11FF}' | '\u{D7CB}'..='\u{D7FB}')
+}
+
 fn is_choseong_only_query(q_norm: &[char]) -> bool {
     !q_norm.is_empty()
         && q_norm.len() >= 2
@@ -1258,7 +1277,10 @@ fn handle_search(
     let t0 = Instant::now();
     let my_search_seq = state.latest_search_seq.fetch_add(1, Ordering::Relaxed) + 1;
 
-    let raw_query = params.get("q").map(|s| s.trim()).unwrap_or("");
+    let raw_query = params.get("q").map(|s| s.as_str()).unwrap_or("");
+    let has_leading_space = raw_query.starts_with(' ');
+    let has_trailing_space = raw_query.ends_with(' ');
+    let core_query = raw_query.trim();
     let mode = params.get("mode").map(|s| s.as_str()).unwrap_or("all");
     let doc_filter = params.get("doc_id").map(|s| s.as_str()).unwrap_or("ALL");
     let cat_filter = params.get("category").map(|s| s.as_str()).unwrap_or("ALL");
@@ -1282,16 +1304,16 @@ fn handle_search(
         raw_limit
     };
 
-    let norm_query_nfd = state.normalizer.to_nfd_norm(raw_query);
+    let norm_query_nfd = state.normalizer.to_nfd_norm(core_query);
     let norm_query_display = state
         .normalizer
         .compose_modern_hangul_for_display(&norm_query_nfd);
     let norm_query_chars: Vec<char> = norm_query_nfd.chars().collect();
-    let norm_morph_query = state.normalizer.normalize_morph_str(raw_query);
+    let norm_morph_query = state.normalizer.normalize_morph_str(core_query);
 
-    let bracket_tokens = state.normalizer.parse_bracket_query(raw_query);
+    let bracket_tokens = state.normalizer.parse_bracket_query(core_query);
 
-    if raw_query.is_empty() && doc_filter == "ALL" && layer_filter == "ALL" && cat_filter == "ALL" {
+    if core_query.is_empty() && doc_filter == "ALL" && layer_filter == "ALL" && cat_filter == "ALL" {
         return json_response(
             &SearchResponse {
                 query: raw_query.to_string(),
@@ -1315,8 +1337,8 @@ fn handle_search(
     };
     state.memory_profile.apply_pragmas(&conn);
 
-    let compiled_regex = if mode == "regex" && !raw_query.is_empty() {
-        match Regex::new(raw_query) {
+    let compiled_regex = if mode == "regex" && !core_query.is_empty() {
+        match Regex::new(core_query) {
             Ok(r) => Some(r),
             Err(e) => {
                 return json_response(
@@ -1361,13 +1383,13 @@ fn handle_search(
     }
 
     let choseong_only = is_choseong_only_query(&norm_query_chars);
-    if !raw_query.is_empty() && mode != "regex" && !choseong_only && bracket_tokens.is_none() {
+    if !core_query.is_empty() && mode != "regex" && !choseong_only && bracket_tokens.is_none() {
         if mode == "surface" || mode == "jamo" {
             sql.push_str(
                 " AND (s.text_nfd_norm LIKE ? OR s.text_unicode LIKE ? OR s.text_raw LIKE ?)",
             );
             let pat_nfd = format!("%{}%", norm_query_nfd);
-            let pat_raw = format!("%{}%", raw_query);
+            let pat_raw = format!("%{}%", core_query);
             sql_params.push(pat_nfd);
             sql_params.push(pat_raw.clone());
             sql_params.push(pat_raw);
@@ -1452,7 +1474,7 @@ fn handle_search(
                 .compose_modern_hangul_for_display(&text_unicode);
 
             // Browse mode if query is empty
-            if raw_query.is_empty() {
+            if core_query.is_empty() {
                 total_matches += 1;
                 if hits.len() < limit {
                     let first_word_len = display_text
@@ -1509,6 +1531,26 @@ fn handle_search(
                 continue;
             }
 
+            let display_chars: Vec<char> = display_text.chars().collect();
+            let d_len = display_chars.len();
+
+            // [요구사항 2, 3] 어절 경계 및 문장 첫머리 매칭 검사 클로저
+            let check_boundary = |orig_start: usize, orig_end: usize| -> bool {
+                if has_leading_space {
+                    // 앞 스페이스: 문장 첫머리(orig_start == 0)이거나 바로 앞이 공백/줄바꿈
+                    if orig_start > 0 && !display_chars[orig_start - 1].is_whitespace() {
+                        return false;
+                    }
+                }
+                if has_trailing_space {
+                    // 뒤 스페이스: 문장 끝(orig_end >= d_len)이거나 바로 뒤가 공백/줄바꿈
+                    if orig_end < d_len && !display_chars[orig_end].is_whitespace() {
+                        return false;
+                    }
+                }
+                true
+            };
+
             let mut matched_span: Option<(usize, usize, &str)> = None;
 
             // 0) Bracket Jamo Search (`[초/중/종]` with `*`, `?`, `+`)
@@ -1516,7 +1558,9 @@ fn handle_search(
                 if mode == "all" || mode == "jamo" || mode == "surface" {
                     let units = state.normalizer.tokenize_text_units(&display_text);
                     if let Some((sc, ec)) = find_bracket_query_match(b_tokens, &units) {
-                        matched_span = Some((sc, ec, "자소[초/중/종]"));
+                        if check_boundary(sc, ec) {
+                            matched_span = Some((sc, ec, "자소[초/중/종]"));
+                        }
                     }
                 }
             }
@@ -1526,32 +1570,40 @@ fn handle_search(
                 && bracket_tokens.is_none()
                 && (mode == "all" || mode == "surface" || mode == "jamo")
             {
-                if text_nfd_norm.contains(&norm_query_nfd) {
-                    let (norm_chars, char_map) =
-                        state.normalizer.to_nfd_norm_with_map(&display_text);
-                    if let Some((n_start, n_end)) =
-                        find_char_subslice(&norm_chars, &norm_query_chars)
-                    {
-                        let orig_start = char_map.get(n_start).copied().unwrap_or(0);
-                        let orig_end = char_map
-                            .get(n_end.saturating_sub(1))
-                            .map(|&idx| idx + 1)
-                            .unwrap_or(orig_start + 1);
-                        matched_span = Some((orig_start, orig_end, "원문/자모"));
+                let (norm_chars, char_map) =
+                    state.normalizer.to_nfd_norm_with_map(&display_text);
+                let candidates = find_all_char_subslices(&norm_chars, &norm_query_chars);
+
+                for (n_start, n_end) in candidates {
+                    // [요구사항 4] 자소 검색 모드(jamo)가 아닐 때는 음절 단위 검색!
+                    // 매칭된 슬라이스 바로 뒤에 종성 자모(받침)가 이어지면 탈락 ('하도' 뒤에 'ㅇ' 받침 붙은 '하동' 등 제외)
+                    if mode != "jamo" {
+                        if n_end < norm_chars.len() && is_jongseong_jamo(norm_chars[n_end]) {
+                            continue;
+                        }
                     }
-                } else if text_raw.contains(raw_query) {
-                    let (norm_chars, char_map) =
-                        state.normalizer.to_nfd_norm_with_map(&display_text);
-                    if let Some((n_start, n_end)) =
-                        find_char_subslice(&norm_chars, &norm_query_chars)
-                    {
-                        let orig_start = char_map.get(n_start).copied().unwrap_or(0);
-                        let orig_end = char_map
-                            .get(n_end.saturating_sub(1))
-                            .map(|&idx| idx + 1)
-                            .unwrap_or(orig_start + 1);
-                        matched_span = Some((orig_start, orig_end, "원문(PUA)"));
-                    } else {
+
+                    let orig_start = char_map.get(n_start).copied().unwrap_or(0);
+                    let orig_end = char_map
+                        .get(n_end.saturating_sub(1))
+                        .map(|&idx| idx + 1)
+                        .unwrap_or(orig_start + 1);
+
+                    // [요구사항 2, 3] 어절 경계 및 문장 첫머리 매칭 검사
+                    if check_boundary(orig_start, orig_end) {
+                        matched_span = Some((orig_start, orig_end, "원문/자모"));
+                        break;
+                    }
+                }
+
+                if matched_span.is_none() && text_raw.contains(core_query) {
+                    if let Some(byte_pos) = display_text.find(core_query) {
+                        let sc = display_text[..byte_pos].chars().count();
+                        let ec = sc + core_query.chars().count();
+                        if check_boundary(sc, ec) {
+                            matched_span = Some((sc, ec, "원문(PUA)"));
+                        }
+                    } else if !has_leading_space && !has_trailing_space {
                         matched_span =
                             Some((0, display_text.chars().count().min(6), "원문(PUA)"));
                     }
@@ -1564,10 +1616,14 @@ fn handle_search(
                     if let Some(m) = re.find(&display_text) {
                         let start_c = display_text[..m.start()].chars().count();
                         let end_c = start_c + display_text[m.start()..m.end()].chars().count();
-                        matched_span = Some((start_c, end_c, "정규식"));
+                        if check_boundary(start_c, end_c) {
+                            matched_span = Some((start_c, end_c, "정규식"));
+                        }
                     } else if let Some(_m) = re.find(&text_nfd_norm) {
-                        matched_span =
-                            Some((0, display_text.chars().count().min(8), "정규식(NFD)"));
+                        if !has_leading_space && !has_trailing_space {
+                            matched_span =
+                                Some((0, display_text.chars().count().min(8), "정규식(NFD)"));
+                        }
                     }
                 }
             }
@@ -1579,28 +1635,32 @@ fn handle_search(
                 && !morph_flat.is_empty()
             {
                 let norm_m = state.normalizer.normalize_morph_str(&morph_flat);
-                if norm_m.contains(&norm_morph_query) || morph_flat.contains(raw_query) {
+                if norm_m.contains(&norm_morph_query) || morph_flat.contains(core_query) {
                     let eojeol_analyses: Vec<&str> = morph_flat.split(" | ").collect();
                     let words: Vec<&str> = display_text.split_whitespace().collect();
-                    let mut highlight_range = (0, display_text.chars().count().min(6));
+                    let mut highlight_range = None;
                     for (idx, ea) in eojeol_analyses.iter().enumerate() {
                         if state
                             .normalizer
                             .normalize_morph_str(ea)
                             .contains(&norm_morph_query)
-                            || ea.contains(raw_query)
+                            || ea.contains(core_query)
                         {
                             if let Some(&w) = words.get(idx) {
                                 if let Some(byte_pos) = display_text.find(w) {
                                     let sc = display_text[..byte_pos].chars().count();
                                     let ec = sc + w.chars().count();
-                                    highlight_range = (sc, ec);
+                                    if check_boundary(sc, ec) {
+                                        highlight_range = Some((sc, ec));
+                                        break;
+                                    }
                                 }
                             }
-                            break;
                         }
                     }
-                    matched_span = Some((highlight_range.0, highlight_range.1, "형태분석"));
+                    if let Some(hr) = highlight_range {
+                        matched_span = Some((hr.0, hr.1, "형태분석"));
+                    }
                 }
             }
 
@@ -1611,28 +1671,32 @@ fn handle_search(
                 && !sense_flat.is_empty()
             {
                 let norm_s = state.normalizer.normalize_morph_str(&sense_flat);
-                if norm_s.contains(&norm_morph_query) || sense_flat.contains(raw_query) {
+                if norm_s.contains(&norm_morph_query) || sense_flat.contains(core_query) {
                     let eojeol_analyses: Vec<&str> = sense_flat.split(" | ").collect();
                     let words: Vec<&str> = display_text.split_whitespace().collect();
-                    let mut highlight_range = (0, display_text.chars().count().min(6));
+                    let mut highlight_range = None;
                     for (idx, ea) in eojeol_analyses.iter().enumerate() {
                         if state
                             .normalizer
                             .normalize_morph_str(ea)
                             .contains(&norm_morph_query)
-                            || ea.contains(raw_query)
+                            || ea.contains(core_query)
                         {
                             if let Some(&w) = words.get(idx) {
                                 if let Some(byte_pos) = display_text.find(w) {
                                     let sc = display_text[..byte_pos].chars().count();
                                     let ec = sc + w.chars().count();
-                                    highlight_range = (sc, ec);
+                                    if check_boundary(sc, ec) {
+                                        highlight_range = Some((sc, ec));
+                                        break;
+                                    }
                                 }
                             }
-                            break;
                         }
                     }
-                    matched_span = Some((highlight_range.0, highlight_range.1, "형태의미"));
+                    if let Some(hr) = highlight_range {
+                        matched_span = Some((hr.0, hr.1, "형태의미"));
+                    }
                 }
             }
 
@@ -1643,13 +1707,15 @@ fn handle_search(
                 && !syntax_tree.is_empty()
             {
                 let norm_syn = state.normalizer.normalize_morph_str(&syntax_tree);
-                if syntax_tree.contains(raw_query) || norm_syn.contains(&norm_morph_query) {
+                if syntax_tree.contains(core_query) || norm_syn.contains(&norm_morph_query) {
                     let first_word_len = display_text
                         .split_whitespace()
                         .next()
                         .map(|w| w.chars().count())
                         .unwrap_or(6);
-                    matched_span = Some((0, first_word_len, "구문분석"));
+                    if check_boundary(0, first_word_len) {
+                        matched_span = Some((0, first_word_len, "구문분석"));
+                    }
                 }
             }
 
@@ -2638,5 +2704,92 @@ fn main() {
             };
             let _ = req.respond(resp);
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_syllable_vs_jamo_matching() {
+        let normalizer = Normalizer::new(std::path::Path::new("assets/data/pua_table.json"));
+        let query = "하도";
+        let query_nfd = normalizer.to_nfd_norm(query);
+        let query_chars: Vec<char> = query_nfd.chars().collect();
+
+        // Case 1: "하동" should NOT match in syllable mode (mode != "jamo")
+        let text1 = "하동에 갔다";
+        let (norm1, _) = normalizer.to_nfd_norm_with_map(text1);
+        let candidates1 = find_all_char_subslices(&norm1, &query_chars);
+        assert_eq!(candidates1.len(), 1);
+        let (_s1, e1) = candidates1[0];
+        // Next char is 'ㅇ' (jongseong), so in syllable mode it fails!
+        assert!(e1 < norm1.len() && is_jongseong_jamo(norm1[e1]));
+
+        // Case 2: "하도" should MATCH in syllable mode
+        let text2 = "하도 말이 많아서";
+        let (norm2, _) = normalizer.to_nfd_norm_with_map(text2);
+        let candidates2 = find_all_char_subslices(&norm2, &query_chars);
+        assert_eq!(candidates2.len(), 1);
+        let (_s2, e2) = candidates2[0];
+        // Next char is space (not jongseong), so it passes!
+        assert!(e2 == norm2.len() || !is_jongseong_jamo(norm2[e2]));
+    }
+
+    #[test]
+    fn test_space_word_boundary_rules() {
+        let normalizer = Normalizer::new(std::path::Path::new("assets/data/pua_table.json"));
+        let query = "하도";
+        let query_nfd = normalizer.to_nfd_norm(query);
+        let query_chars: Vec<char> = query_nfd.chars().collect();
+
+        // Helper boundary checker
+        let check = |text: &str, has_leading: bool, has_trailing: bool| -> bool {
+            let (norm, char_map) = normalizer.to_nfd_norm_with_map(text);
+            let display_chars: Vec<char> = text.chars().collect();
+            let d_len = display_chars.len();
+            let candidates = find_all_char_subslices(&norm, &query_chars);
+
+            for (n_start, n_end) in candidates {
+                if n_end < norm.len() && is_jongseong_jamo(norm[n_end]) {
+                    continue;
+                }
+                let orig_start = char_map.get(n_start).copied().unwrap_or(0);
+                let orig_end = char_map.get(n_end.saturating_sub(1)).map(|&idx| idx + 1).unwrap_or(orig_start + 1);
+
+                let mut ok = true;
+                if has_leading {
+                    if orig_start > 0 && !display_chars[orig_start - 1].is_whitespace() {
+                        ok = false;
+                    }
+                }
+                if has_trailing {
+                    if orig_end < d_len && !display_chars[orig_end].is_whitespace() {
+                        ok = false;
+                    }
+                }
+                if ok {
+                    return true;
+                }
+            }
+            false
+        };
+
+        // Query ' 하도 ' (has_leading=true, has_trailing=true)
+        // 1. Sentence start: "하도 말이 많다" -> MUST MATCH! (요구사항 3)
+        assert!(check("하도 말이 많다", true, true));
+
+        // 2. Mid-sentence isolated adverb: "정말 하도 어이가 없다" -> MUST MATCH! (요구사항 2)
+        assert!(check("정말 하도 어이가 없다", true, true));
+
+        // 3. Substring in word: "말하도록 하였다" -> MUST NOT MATCH! (요구사항 2)
+        assert!(!check("말하도록 하였다", true, true));
+
+        // 4. Substring at end of word: "일하도 말았다" -> MUST NOT MATCH!
+        assert!(!check("일하도 말았다", true, true));
+
+        // 5. Followed by jongseong: "하동으로 갔다" -> MUST NOT MATCH! (요구사항 4)
+        assert!(!check("하동으로 갔다", true, true));
     }
 }

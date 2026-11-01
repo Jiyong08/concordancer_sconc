@@ -939,7 +939,12 @@
     }
     currentSearchAbort = new AbortController();
 
-    const q = searchInput.value.trim();
+    // Allow leading/trailing space for word boundary queries (e.g. ' 하도 ')
+    const q = searchInput.value;
+    if (!q.trim() && docId === 'ALL') {
+      kwicResultMeta.innerHTML = '<span style="color:#64748b;">검색어를 입력하거나 특정 문서를 선택해 주세요.</span>';
+      return;
+    }
     const mode = selectMode.value;
     const layer = selectLayer.value;
     const docId = selectDoc.value;

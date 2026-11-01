@@ -31,8 +31,8 @@ const KEY_LAYOUT = {
   KeyO: { base: ['V', 'AE', 'ㅐ'], shift: ['V', 'YAE', 'ㅒ'] },
   KeyP: { base: ['V', 'E', 'ㅔ'], shift: ['V', 'YE', 'ㅖ'] },
 
-  KeyA: { base: ['L', 'MIEUM', 'ㅁ'], shift: ['L', 'CHITUEUMCIEUC', 'ᅎ'] },
-  KeyS: { base: ['L', 'NIEUN', 'ㄴ'], shift: ['L', 'CEONGCHIEUMCIEUC', 'ᅐ'] },
+  KeyA: { base: ['L', 'MIEUM', 'ㅁ'], shift: ['L', 'PANSIOS', 'ㅿ'] },
+  KeyS: { base: ['L', 'NIEUN', 'ㄴ'], shift: ['L', 'YESIEUNG', 'ㆁ'] },
   KeyD: { base: ['L', 'IEUNG', 'ㅇ'], shift: ['L', 'YESIEUNG', 'ㆁ'] },
   KeyF: { base: ['L', 'RIEUL', 'ㄹ'], shift: ['L', 'PANSIOS', 'ㅿ'] },
   KeyG: { base: ['L', 'HIEUH', 'ㅎ'], shift: ['L', 'YEORINHIEUH', 'ㆆ'] },
@@ -43,8 +43,8 @@ const KEY_LAYOUT = {
 
   KeyZ: { base: ['L', 'KHIEUKH', 'ㅋ'], shift: ['L', 'CHITUEUMSIOS', 'ᄼ'] },
   KeyX: { base: ['L', 'THIEUTH', 'ㅌ'], shift: ['L', 'CEONGCHIEUMSIOS', 'ᄾ'] },
-  KeyC: { base: ['L', 'CHIEUCH', 'ㅊ'], shift: ['L', 'CHITUEUMCHIEUCH', 'ᅔ'] },
-  KeyV: { base: ['L', 'PHIEUPH', 'ㅍ'], shift: ['L', 'CEONGCHIEUMCHIEUCH', 'ᅕ'] },
+  KeyC: { base: ['L', 'CHIEUCH', 'ㅊ'], shift: ['L', 'CHITUEUMCIEUC', 'ᅎ'] },
+  KeyV: { base: ['L', 'PHIEUPH', 'ㅍ'], shift: ['L', 'CEONGCHIEUMCIEUC', 'ᅐ'] },
   KeyB: { base: ['V', 'YU', 'ㅠ'], shift: ['V', 'YU', 'ㅠ'] },
   KeyN: { base: ['V', 'U', 'ㅜ'], shift: ['V', 'U', 'ㅜ'] },
   KeyM: { base: ['V', 'EU', 'ㅡ'], shift: ['V', 'EU', 'ㅡ'] },

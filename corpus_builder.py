@@ -146,6 +146,67 @@ def get_existing_source_files_map(conn: sqlite3.Connection):
         })
     return mapping
 
+
+def check_file_tail_in_db(conn: sqlite3.Connection, doc_id: str, file_path: str) -> bool:
+    """
+    [요구사항 1] 해당 파일의 마지막 부분(문장/어절)도 DB의 segments 테이블에
+    온전히 저장되어 있는지 직접 확인하여 불완전/잘림 여부를 2중 검증합니다.
+    """
+    if not conn or not doc_id or not os.path.exists(file_path):
+        return True
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT text_raw, text_unicode, morph_flat, syntax_tree FROM segments WHERE doc_id = ? ORDER BY seq_no DESC LIMIT 1",
+            (doc_id,)
+        )
+        row = cur.fetchone()
+        if not row:
+            return False
+
+        db_last_raw = (row[0] or "").strip()
+        db_last_uni = (row[1] or "").strip()
+        db_last_morph = (row[2] or "").strip()
+        db_last_syntax = (row[3] or "").strip()
+
+        if not db_last_raw and not db_last_uni and not db_last_morph and not db_last_syntax:
+            return True
+
+        enc, _ = detect_file_encoding(file_path)
+        fsize = os.path.getsize(file_path)
+        read_bytes = min(fsize, 32768)
+        with open(file_path, "rb") as f:
+            if fsize > read_bytes:
+                f.seek(fsize - read_bytes)
+            tail_bytes = f.read()
+
+        tail_raw = tail_bytes.decode(enc, errors="ignore")
+        tail_uni = pua_to_unicode(tail_raw)
+
+        if db_last_raw and (db_last_raw in tail_raw or db_last_raw in tail_uni):
+            return True
+        if db_last_uni and (db_last_uni in tail_raw or db_last_uni in tail_uni):
+            return True
+
+        token_pat = re.compile(r"[\uac00-\ud7a3\u1100-\u11ff\ua960-\ua97f\ud7b0-\ud7ff\u4e00-\u9fff\ue000-\uf8ffa-zA-Z0-9]+")
+        tokens_db = (
+            token_pat.findall(db_last_raw) +
+            token_pat.findall(db_last_uni) +
+            token_pat.findall(db_last_morph) +
+            token_pat.findall(db_last_syntax)
+        )
+        tokens_tail = set(token_pat.findall(tail_raw) + token_pat.findall(tail_uni))
+
+        if tokens_db:
+            for t in reversed(tokens_db[-10:]):
+                if t in tokens_tail or t in tail_raw or t in tail_uni:
+                    return True
+            return False
+
+        return True
+    except Exception:
+        return False
+
 def is_file_duplicate_in_db(existing_files_map, file_path: str, conn=None) -> bool:
     """
     파일명이 동일하고 파일 내용(해시 또는 동일 크기 검증)도 동일한지 판별합니다.
@@ -169,12 +230,11 @@ def is_file_duplicate_in_db(existing_files_map, file_path: str, conn=None) -> bo
 
     for cand in matching_candidates:
         cand_hash = cand["hash"]
+        matched_hash = False
         if cand_hash:
             if cand_hash == fhash:
-                return True
+                matched_hash = True
         else:
-            # 기존 DB 레코드에 해시가 비어있던 경우(마이그레이션 이전 생성된 DB):
-            # 동일 파일명 + 동일 크기이므로 방금 계산한 해시를 DB에 백필(backfill)하고 True 반환
             if conn:
                 try:
                     cur = conn.cursor()
@@ -186,6 +246,15 @@ def is_file_duplicate_in_db(existing_files_map, file_path: str, conn=None) -> bo
                     cand["hash"] = fhash
                 except Exception:
                     pass
+            matched_hash = True
+
+        if matched_hash:
+            # [요구사항 1] 파일명 및 내용뿐만 아니라 파일 끝부분도 DB에 온전히 존재하는지 검증
+            doc_id = cand.get("doc_id", "")
+            if conn and doc_id:
+                if not check_file_tail_in_db(conn, doc_id, file_path):
+                    # 파일의 마지막 부분이 DB에 누락되었으므로 중복 건너뛰지 않고 재구축 수행
+                    return False
             return True
 
     return False

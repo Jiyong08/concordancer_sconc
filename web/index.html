@@ -480,17 +480,68 @@
                       <td><code>q t e n t</code> → <strong>ᄡᅳᆺ</strong></td>
                     </tr>
                     <tr>
-                      <td><strong>치두음 · 정치음 · 방점</strong></td>
-                      <td><code>Shift+Z/X</code>=<strong>ᄼ/ᄾ</strong>, <code>Shift+A/S</code>=<strong>ᅎ/ᅐ</strong>, <code>Shift+C/V</code>=<strong>ᅔ/ᅕ</strong><br/><code>Shift+Y</code>=<strong>거성(〮)</strong>, <code>Shift+U</code>=<strong>상성(〯)</strong></td>
+                      <td><strong>반치음 · 옛이응 · 여린히읗 · 방점</strong></td>
+                      <td><code>Shift+A/F</code>=<strong>ㅿ(반치음 ᅀ)</strong>, <code>Shift+S/D</code>=<strong>ㆁ(옛이응 ᅌ)</strong>, <code>Shift+G</code>=<strong>ㆆ(여린히읗)</strong><br/><code>Shift+Z/X</code>=<strong>ᄼ/ᄾ</strong>, <code>Shift+C/V</code>=<strong>ᅎ/ᅐ</strong>, <code>Shift+Y/U</code>=<strong>거성(〮)/상성(〯)</strong></td>
                       <td>화상 자판(<code>🧮 옛글 낱자판</code>) 클릭 입력도 지원</td>
                     </tr>
                   </tbody>
                 </table>
               </div>
 
-              <!-- 3. 다층 주석(형태·의미·구문) 및 정규식 검색 안내 -->
+              <!-- 3. 공백(스페이스) 어절 경계 및 문장 첫머리 매칭 규칙 & 음절 단위 일반 검색 -->
               <div class="guide-box">
-                <h3>3. 형태소 · 형태의미(어깨번호) · 구문 표지 · 정규식 검색법</h3>
+                <h3>3. 공백(스페이스)을 이용한 어절 경계 및 문장 첫머리 매칭 규칙</h3>
+                <p style="font-size:0.82rem; margin:0 0 8px 0; color:#334155;">
+                  검색식 앞뒤에 스페이스(공백)를 입력하면 독립된 어절 단위로 검색을 수행할 수 있습니다.
+                </p>
+                <table class="guide-table">
+                  <thead>
+                    <tr>
+                      <th style="width:130px;">검색식 형태</th>
+                      <th>매칭 규칙 및 의미</th>
+                      <th>적용 예시</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><code>' 하도 '</code> (앞뒤 공백)</td>
+                      <td>
+                        <strong>독립된 어절</strong>로 쓰인 경우만 검색합니다.<br/>
+                        • <strong>앞 공백</strong>: 문장의 첫 부분(행의 첫머리)이거나 바로 앞이 공백인 경우 모두 일치합니다.<br/>
+                        • <strong>뒤 공백</strong>: 문장의 끝이거나 바로 뒤가 공백인 경우 일치합니다.
+                      </td>
+                      <td>
+                        <strong>매칭:</strong> <code>하도 세월이 좋아</code>, <code>그는 하도 말이 많다</code><br/>
+                        <span style="color:#dc2626;"><strong>제외:</strong></span> <code>말<strong>하도</strong>록</code>, <code>일<strong>하도</strong>록</code>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><code>' 하도'</code> (앞 공백만)</td>
+                      <td>어절의 시작 부분(어두) 또는 문장의 첫머리에 오는 경우만 검색합니다.</td>
+                      <td><code>하도</code>, <code>하더라도</code> (단, <code>말하도록</code>은 제외)</td>
+                    </tr>
+                    <tr>
+                      <td><code>'하도 '</code> (뒤 공백만)</td>
+                      <td>어절의 끝 부분(어말) 또는 문장의 끝에 오는 경우만 검색합니다.</td>
+                      <td><code>하도</code>, <code>말하도</code> (단, <code>하더라도</code>는 제외)</td>
+                    </tr>
+                    <tr>
+                      <td><strong>음절 단위 일반 검색</strong></td>
+                      <td>
+                        자소 검색 모드(<code>jamo</code>)를 선택하지 않은 일반 검색(<code>all</code>, <code>surface</code>)에서는
+                        <strong>완성형 음절 단위</strong>로 검색됩니다.
+                      </td>
+                      <td>
+                        <code>하도</code> 검색 시 받침이 붙은 <code>하동(ㅎㅏㄷㅗㅇ)</code> 등은 <strong>검색에서 완벽히 제외</strong>됩니다.
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- 4. 다층 주석(형태·의미·구문) 및 정규식 검색 안내 -->
+              <div class="guide-box">
+                <h3>4. 형태소 · 형태의미(어깨번호) · 구문 표지 · 정규식 검색법</h3>
                 <table class="guide-table">
                   <thead>
                     <tr>
@@ -524,9 +575,9 @@
                 </table>
               </div>
 
-              <!-- 4. 원클릭 예시 검색 실행 -->
+              <!-- 5. 원클릭 예시 검색 실행 -->
               <div class="guide-box">
-                <h3>4. ⚡ 원클릭 예시 검색 (클릭 시 검색 화면으로 이동하여 즉시 실행)</h3>
+                <h3>5. ⚡ 원클릭 예시 검색 (클릭 시 검색 화면으로 이동하여 즉시 실행)</h3>
                 <p style="font-size:0.82rem; margin:0 0 10px 0; color:#334155;">
                   아래 예시 버튼을 클릭하면 검색창에 해당 식이 자동으로 입력되며 즉시 결과를 확인하실 수 있습니다.
                 </p>
