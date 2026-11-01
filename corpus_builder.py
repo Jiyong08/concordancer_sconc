@@ -16,6 +16,7 @@ import sys
 import re
 import json
 import sqlite3
+import hashlib
 import unicodedata
 import xml.etree.ElementTree as ET
 from datetime import datetime
@@ -107,6 +108,88 @@ def read_sample_text(file_path: str, max_bytes=8192):
     except Exception:
         return "", enc, label
 
+
+def compute_file_hash(file_path: str) -> str:
+    """파일의 SHA-256 해시를 고속 계산합니다."""
+    try:
+        hasher = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                hasher.update(chunk)
+        return hasher.hexdigest()
+    except Exception:
+        return ""
+
+def get_existing_source_files_map(conn: sqlite3.Connection):
+    """
+    현재 DB의 source_files 테이블에서 이미 등록된 파일들의 정보를 로드합니다.
+    반환: {file_name: [{'size': int, 'hash': str, 'doc_id': str}]}
+    """
+    cur = conn.cursor()
+    # file_hash 컬럼 존재 여부 확인 및 자동 마이그레이션
+    cur.execute("PRAGMA table_info(source_files)")
+    cols = [row[1] for row in cur.fetchall()]
+    if "file_hash" not in cols:
+        try:
+            cur.execute("ALTER TABLE source_files ADD COLUMN file_hash TEXT")
+            conn.commit()
+        except Exception:
+            pass
+
+    cur.execute("SELECT file_name, file_size_bytes, COALESCE(file_hash, ''), linked_doc_id FROM source_files")
+    mapping = {}
+    for fname, size, fhash, doc_id in cur.fetchall():
+        mapping.setdefault(fname, []).append({
+            "size": size,
+            "hash": fhash,
+            "doc_id": doc_id
+        })
+    return mapping
+
+def is_file_duplicate_in_db(existing_files_map, file_path: str, conn=None) -> bool:
+    """
+    파일명이 동일하고 파일 내용(해시 또는 동일 크기 검증)도 동일한지 판별합니다.
+    """
+    fname = os.path.basename(file_path)
+    if fname not in existing_files_map:
+        return False
+    
+    try:
+        fsize = os.path.getsize(file_path)
+    except OSError:
+        return False
+
+    matching_candidates = [c for c in existing_files_map[fname] if c["size"] == fsize]
+    if not matching_candidates:
+        return False
+
+    fhash = compute_file_hash(file_path)
+    if not fhash:
+        return False
+
+    for cand in matching_candidates:
+        cand_hash = cand["hash"]
+        if cand_hash:
+            if cand_hash == fhash:
+                return True
+        else:
+            # 기존 DB 레코드에 해시가 비어있던 경우(마이그레이션 이전 생성된 DB):
+            # 동일 파일명 + 동일 크기이므로 방금 계산한 해시를 DB에 백필(backfill)하고 True 반환
+            if conn:
+                try:
+                    cur = conn.cursor()
+                    cur.execute(
+                        "UPDATE source_files SET file_hash = ? WHERE file_name = ? AND file_size_bytes = ?",
+                        (fhash, fname, fsize)
+                    )
+                    conn.commit()
+                    cand["hash"] = fhash
+                except Exception:
+                    pass
+            return True
+
+    return False
+
 def init_db(conn: sqlite3.Connection):
     cur = conn.cursor()
     cur.executescript("""
@@ -138,6 +221,7 @@ def init_db(conn: sqlite3.Connection):
         db_file_name TEXT NOT NULL,
         imported_sentences INTEGER NOT NULL,
         imported_eojeols INTEGER NOT NULL,
+        file_hash TEXT,
         note TEXT,
         FOREIGN KEY (linked_doc_id) REFERENCES documents(doc_id)
     );
@@ -214,8 +298,8 @@ def save_document_and_segments(conn, doc_info, file_records, segments_list, targ
             INSERT INTO source_files (
                 file_name, rel_path, file_size_bytes, original_encoding, text_format,
                 corpus_type, raw_notation_desc, analysis_notation_desc, linked_doc_id,
-                db_file_name, imported_sentences, imported_eojeols, note
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                db_file_name, imported_sentences, imported_eojeols, file_hash, note
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             r["file_name"],
             r.get("rel_path", r["file_name"]),
@@ -229,6 +313,7 @@ def save_document_and_segments(conn, doc_info, file_records, segments_list, targ
             target_db_name,
             r.get("imported_sentences", total_sents),
             r.get("imported_eojeols", total_eojeols),
+            r.get("file_hash", ""),
             r.get("note", "")
         ))
 
@@ -788,6 +873,7 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
 
     conn = sqlite3.connect(db_path)
     init_db(conn)
+    existing_files_map = get_existing_source_files_map(conn)
 
     report = {
         "folder": str(folder_path),
@@ -796,6 +882,9 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
         "documents_created": 0,
         "sentences_imported": 0,
         "eojeols_imported": 0,
+        "skipped_existing_files": 0,
+        "skipped_existing_documents": 0,
+        "skipped_files_list": [],
         "items": []
     }
 
@@ -813,6 +902,20 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
 
     for code, kmap in stem_map.items():
         if "BT" in kmap and "BS" in kmap and "BG" in kmap:
+            # 중복 검사: 3개 파일 모두 동일한 파일명 및 내용으로 이미 DB에 존재하는지 확인
+            bt_dup = is_file_duplicate_in_db(existing_files_map, str(kmap["BT"]), conn)
+            bs_dup = is_file_duplicate_in_db(existing_files_map, str(kmap["BS"]), conn)
+            bg_dup = is_file_duplicate_in_db(existing_files_map, str(kmap["BG"]), conn)
+            if bt_dup and bs_dup and bg_dup:
+                if progress_callback:
+                    progress_callback(f"[건너뜀] 이미 DB에 등록된 말뭉치 (내용 동일): 세종 3중 연동 (code)")
+                for k in ("BT", "BS", "BG"):
+                    processed_files.add(kmap[k].name)
+                    report["skipped_files_list"].append(kmap[k].name)
+                report["skipped_existing_files"] += 3
+                report["skipped_existing_documents"] += 1
+                continue
+
             # 세종 3중 연동 처리!
             if progress_callback:
                 progress_callback(f"세종 3중 연동 말뭉치 감지 (코드 {code}): BTAA+BSAA+BGAA 처리 중...")
@@ -821,6 +924,9 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
             doc_info, file_records, segments = parse_braa0001_triplet(
                 str(kmap["BT"]), str(kmap["BS"]), str(kmap["BG"]), code
             )
+            for r in file_records:
+                k = "BT" if "BT" in r["file_name"] else ("BS" if "BS" in r["file_name"] else "BG")
+                r["file_hash"] = compute_file_hash(str(kmap[k]))
             s_cnt, e_cnt = save_document_and_segments(conn, doc_info, file_records, segments)
             for k in ("BT", "BS", "BG"):
                 processed_files.add(kmap[k].name)
@@ -846,6 +952,18 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
 
     for base, extmap in learner_pairs.items():
         if "txt" in extmap and "xml" in extmap:
+            t_dup = is_file_duplicate_in_db(existing_files_map, str(extmap["txt"]), conn)
+            x_dup = is_file_duplicate_in_db(existing_files_map, str(extmap["xml"]), conn)
+            if t_dup and x_dup:
+                if progress_callback:
+                    progress_callback(f"[건너뜀] 이미 DB에 등록된 말뭉치 (내용 동일): 학습자 연동 ({base})")
+                processed_files.add(extmap["txt"].name)
+                processed_files.add(extmap["xml"].name)
+                report["skipped_files_list"].extend([extmap["txt"].name, extmap["xml"].name])
+                report["skipped_existing_files"] += 2
+                report["skipped_existing_documents"] += 1
+                continue
+
             sample_txt, enc_t, _ = read_sample_text(str(extmap["txt"]), 512)
             sample_xml, enc_x, _ = read_sample_text(str(extmap["xml"]), 512)
             if "<Korean_Learners_Corpus>" in sample_xml or "<AssignmentTheme>" in sample_xml:
@@ -865,6 +983,7 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
                     {
                         "file_name": extmap["txt"].name,
                         "file_size_bytes": os.path.getsize(str(extmap["txt"])),
+                        "file_hash": compute_file_hash(str(extmap["txt"])),
                         "original_encoding": enc_t,
                         "text_format": "순수 텍스트 (.txt)",
                         "corpus_type": "원시 말뭉치 (학습자 작문)",
@@ -875,6 +994,7 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
                     {
                         "file_name": extmap["xml"].name,
                         "file_size_bytes": os.path.getsize(str(extmap["xml"])),
+                        "file_hash": compute_file_hash(str(extmap["xml"])),
                         "original_encoding": enc_x,
                         "text_format": "XML (<Korean_Learners_Corpus>)",
                         "corpus_type": "형태 분석 말뭉치 (학습자 주석 XML)",
@@ -900,6 +1020,17 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
     for f in all_files:
         if f.name in processed_files:
             continue
+
+        # 중복 검사: 파일명이 동일하고 내용(크기 및 해시)도 동일한 경우 건너뜀
+        if is_file_duplicate_in_db(existing_files_map, str(f), conn):
+            if progress_callback:
+                progress_callback(f"[건너뜀] 이미 DB에 등록된 말뭉치 (내용 동일): {f.name}")
+            processed_files.add(f.name)
+            report["skipped_files_list"].append(f.name)
+            report["skipped_existing_files"] += 1
+            report["skipped_existing_documents"] += 1
+            continue
+
         sample_str, enc, enc_label = read_sample_text(str(f), 8192)
         f_size = os.path.getsize(str(f))
         fname = f.name
@@ -923,6 +1054,7 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
                 file_recs = [{
                     "file_name": fname,
                     "file_size_bytes": f_size,
+                    "file_hash": compute_file_hash(str(f)),
                     "original_encoding": enc_label,
                     "text_format": "XML (<c><g><m><s>)",
                     "corpus_type": "옛한글 사전/자석 말뭉치",
@@ -951,6 +1083,7 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
                 file_recs = [{
                     "file_name": fname,
                     "file_size_bytes": f_size,
+                    "file_hash": compute_file_hash(str(f)),
                     "original_encoding": enc_label,
                     "text_format": "XML (<sent>)",
                     "corpus_type": "옛한글 문헌 마크업 말뭉치",
@@ -980,6 +1113,7 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
                 file_recs = [{
                     "file_name": fname,
                     "file_size_bytes": f_size,
+                    "file_hash": compute_file_hash(str(f)),
                     "original_encoding": enc_label,
                     "text_format": "XML (<Korean_Learners_Corpus>)",
                     "corpus_type": "형태 분석 말뭉치 (학습자 주석 XML)",
@@ -1039,6 +1173,7 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
                 file_recs = [{
                     "file_name": fname,
                     "file_size_bytes": f_size,
+                    "file_hash": compute_file_hash(str(f)),
                     "original_encoding": enc_label,
                     "text_format": "TEI.2 SGML/XML + TSV",
                     "corpus_type": "형태 분석 말뭉치 (세종 구어)",
@@ -1067,6 +1202,7 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
                 file_recs = [{
                     "file_name": fname,
                     "file_size_bytes": f_size,
+                    "file_hash": compute_file_hash(str(f)),
                     "original_encoding": enc_label,
                     "text_format": "TEI.2 SGML/XML",
                     "corpus_type": "원시 말뭉치 (세종 구어 전사)",
@@ -1095,6 +1231,7 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
                 file_recs = [{
                     "file_name": fname,
                     "file_size_bytes": f_size,
+                    "file_hash": compute_file_hash(str(f)),
                     "original_encoding": enc_label,
                     "text_format": "TEI.2 SGML/XML",
                     "corpus_type": "원시 말뭉치 (세종 문어)",
@@ -1125,6 +1262,7 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
                 file_recs = [{
                     "file_name": fname,
                     "file_size_bytes": f_size,
+                    "file_hash": compute_file_hash(str(f)),
                     "original_encoding": enc_label,
                     "text_format": "평문 텍스트 (.txt)",
                     "corpus_type": cat,
@@ -1139,7 +1277,10 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
 
     conn.close()
     if progress_callback:
-        progress_callback(f"데이터베이스 구축 완료! 총 {report['documents_created']}개 문서, {report['sentences_imported']:,}문장 생성됨.")
+        msg = f"데이터베이스 구축 완료! 신규 {report['documents_created']}개 문서 ({report['sentences_imported']:,}문장) 생성됨."
+        if report["skipped_existing_files"] > 0:
+            msg += f" (이미 등록된 {report['skipped_existing_files']}개 파일 / {report['skipped_existing_documents']}개 문서는 내용 동일로 건너뜀)"
+        progress_callback(msg)
     return report
 
 if __name__ == "__main__":
