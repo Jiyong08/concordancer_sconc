@@ -61,8 +61,16 @@
       <!-- TAB 1: SEARCH & COLLAPSIBLE MULTI-LAYER INSPECTOR -->
       <section id="tab-search" class="tab-panel active">
         <div class="search-card">
+          <!-- 검색창 상단 접기/펼치기 제어 헤더 -->
+          <div class="search-card-header">
+            <span class="search-card-title">🔍 말뭉치 검색 조건 및 필터 설정</span>
+            <button type="button" class="btn-fold-link" id="btn-toggle-search-options" title="검색 옵션(검색방식·필터·문서지정 등)을 접거나 펼쳐 화면 공간을 확보합니다.">
+              <span id="fold-icon">🔼</span> <span id="fold-text">검색창 상단 옵션 접기</span>
+            </button>
+          </div>
+
           <!-- 윗줄 (Row 1): 가로 한 줄 검색 옵션 바 -->
-          <div class="search-options-bar">
+          <div class="search-options-bar" id="search-options-bar">
             <div class="opt-pill">
               <label for="select-mode">검색방식</label>
               <select id="select-mode">
@@ -616,7 +624,7 @@
   <!-- 마우스 우클릭 컨텍스트 메뉴 -->
   <div id="kwic-context-menu" class="context-menu" style="display:none;">
     <div class="context-menu-item" id="ctx-jump">
-      <span>📄</span> <strong>원본 파일에서 이 문장 위치 보기 (점프)</strong>
+      <span>📄</span> <strong>원본 파일의 해당 위치로 점프 (PC 텍스트 에디터로 열기)</strong>
     </div>
     <div class="context-menu-item" id="ctx-detail">
       <span>🔗</span> <strong>다층 주석 연동 상세 뷰어 펼치기</strong>
@@ -641,9 +649,10 @@
       </div>
       <div class="modal-footer">
         <span style="font-size:0.75rem; color:#64748b;">(하이라이트된 줄이 현재 검색된 문장입니다)</span>
-        <div style="display:flex; gap:8px;">
-          <button type="button" class="btn btn-outline" id="btn-copy-jump-text">📋 표시 영역 복사</button>
-          <button type="button" class="btn btn-primary" id="btn-close-jump-modal-bottom">닫기</button>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button type="button" class="btn btn-primary" id="btn-reopen-editor" style="background:#2563eb; border-color:#2563eb; font-weight:700;">🖥️ PC 텍스트 에디터로 열기</button>
+          <button type="button" class="btn btn-outline" id="btn-copy-jump-text">📋 라인 복사</button>
+          <button type="button" class="btn btn-outline" id="btn-close-jump-modal-bottom">닫기</button>
         </div>
       </div>
     </div>

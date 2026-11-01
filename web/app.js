@@ -25,6 +25,12 @@
   const selectLimit = document.getElementById('select-limit');
   const selectCorpusFont = document.getElementById('select-corpus-font');
 
+  // Search Options Collapsible Bar
+  const btnToggleSearchOptions = document.getElementById('btn-toggle-search-options');
+  const searchOptionsBar = document.getElementById('search-options-bar');
+  const foldIcon = document.getElementById('fold-icon');
+  const foldText = document.getElementById('fold-text');
+
   const kwicTbody = document.getElementById('kwic-tbody');
   const kwicResultTitle = document.getElementById('kwic-result-title');
   const kwicResultMeta = document.getElementById('kwic-result-meta');
@@ -57,6 +63,7 @@
   const btnCloseJumpModal = document.getElementById('btn-close-jump-modal');
   const btnCloseJumpModalBottom = document.getElementById('btn-close-jump-modal-bottom');
   const btnCopyJumpText = document.getElementById('btn-copy-jump-text');
+  const btnReopenEditor = document.getElementById('btn-reopen-editor');
 
   // DB Builder Elements
   const builderFolderPath = document.getElementById('builder-folder-path');
@@ -73,6 +80,8 @@
   let activeTabId = null;
   let rightClickedSegId = null;
   let currentJumpLinesData = [];
+  let currentJumpFilePath = '';
+  let currentJumpLineNo = null;
 
   function escapeHtml(str) {
     if (!str) return '';
@@ -806,14 +815,20 @@
       }
 
       currentJumpLinesData = data.lines || [];
+      currentJumpFilePath = data.file_path || '';
+      currentJumpLineNo = data.line_no || null;
       const lineNote = data.line_no ? ` · <strong>원문 라인 #${data.line_no}</strong>` : '';
       const pageNote = data.page_ref ? ` · 장차(Page): <code>${escapeHtml(data.page_ref)}</code>` : '';
       const sentNote = data.sent_id ? ` · 문장ID: <code>${escapeHtml(data.sent_id)}</code>` : '';
+      const editorNote = data.editor_status 
+        ? `<div style="margin-top:6px; padding:4px 10px; border-radius:4px; font-size:0.75rem; background:#eff6ff; color:#1e40af; border:1px solid #bfdbfe; display:inline-block;">🖥️ <strong>에디터 연동:</strong> ${escapeHtml(data.editor_status)}</div>`
+        : '';
 
       modalJumpTitle.textContent = `📄 [${escapeHtml(data.doc_title)}] 원문 소스 점프`;
       modalJumpMeta.innerHTML = `
         <div><strong>원본 파일:</strong> <code>${escapeHtml(data.file_path)}</code> (${escapeHtml(data.file_name)})${lineNote}${pageNote}${sentNote}</div>
         <div style="margin-top:2px; font-size:0.75rem; color:#64748b;">원문 표기: <span class="corpus-text">${escapeHtml(data.text_raw || data.text_unicode)}</span></div>
+        ${editorNote}
       `;
 
       if (!data.lines || data.lines.length === 0) {
@@ -863,6 +878,63 @@
       alert('점프 뷰어 영역의 텍스트가 클립보드에 복사되었습니다.');
     });
   });
+
+  // Open in PC Default Editor
+  if (btnReopenEditor) {
+    btnReopenEditor.addEventListener('click', async () => {
+      if (!currentJumpFilePath) {
+        alert('열 수 있는 원본 파일 경로가 없습니다.');
+        return;
+      }
+      try {
+        btnReopenEditor.disabled = true;
+        btnReopenEditor.textContent = '⏳ 에디터 실행 중...';
+        const url = `/api/open-editor?file_path=${encodeURIComponent(currentJumpFilePath)}${currentJumpLineNo ? `&line=${encodeURIComponent(currentJumpLineNo)}` : ''}`;
+        const res = await fetch(url);
+        const data = await res.json();
+        if (data.error) {
+          alert(`에디터 열기 실패: ${data.error}`);
+        }
+      } catch (err) {
+        alert(`에디터 실행 요청 실패: ${err.message}`);
+      } finally {
+        btnReopenEditor.disabled = false;
+        btnReopenEditor.textContent = '🖥️ PC 텍스트 에디터로 열기';
+      }
+    });
+  }
+
+  // Search Options Bar Fold/Unfold Toggle
+  if (btnToggleSearchOptions && searchOptionsBar) {
+    const applySearchOptionsFold = (collapsed) => {
+      if (collapsed) {
+        searchOptionsBar.classList.add('collapsed');
+        if (foldIcon) foldIcon.textContent = '🔽';
+        if (foldText) foldText.textContent = '검색창 상단 옵션 펼치기';
+      } else {
+        searchOptionsBar.classList.remove('collapsed');
+        if (foldIcon) foldIcon.textContent = '🔼';
+        if (foldText) foldText.textContent = '검색창 상단 옵션 접기';
+      }
+    };
+
+    // Restore saved state from localStorage
+    const savedCollapsed = localStorage.getItem('sconc_search_options_collapsed') === '1';
+    if (savedCollapsed) {
+      applySearchOptionsFold(true);
+    }
+
+    btnToggleSearchOptions.addEventListener('click', () => {
+      const isCurrentlyCollapsed = searchOptionsBar.classList.contains('collapsed');
+      const nextCollapsed = !isCurrentlyCollapsed;
+      applySearchOptionsFold(nextCollapsed);
+      if (nextCollapsed) {
+        localStorage.setItem('sconc_search_options_collapsed', '1');
+      } else {
+        localStorage.removeItem('sconc_search_options_collapsed');
+      }
+    });
+  }
 
   // 2. Folder-based DB Builder
   btnStartBuild.addEventListener('click', async () => {
