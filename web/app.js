@@ -1249,4 +1249,5 @@
   }
 
   loadOverview();
+  pollBuildStatus();
 })();

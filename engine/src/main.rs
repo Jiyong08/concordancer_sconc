@@ -8,9 +8,10 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::io::{BufRead, BufReader};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use sysinfo::System;
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
@@ -832,6 +833,64 @@ struct EditSegmentRequest {
     syntax_tree: Option<String>,
 }
 
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DbBuildProgress {
+    pub is_running: bool,
+    pub status: String,
+    pub current_file: String,
+    pub total_files: usize,
+    pub processed_files: usize,
+    pub percent: f64,
+    pub current_doc_id: String,
+    pub sentences_imported: usize,
+    pub eojeols_imported: usize,
+    pub skipped_files: usize,
+    pub log_lines: Vec<String>,
+    pub target_db_path: String,
+    pub is_new_db_file: bool,
+    pub newly_created_doc_ids: Vec<String>,
+    pub error_message: Option<String>,
+    pub result_summary: Option<serde_json::Value>,
+}
+
+impl Default for DbBuildProgress {
+    fn default() -> Self {
+        Self {
+            is_running: false,
+            status: "IDLE".to_string(),
+            current_file: String::new(),
+            total_files: 0,
+            processed_files: 0,
+            percent: 0.0,
+            current_doc_id: String::new(),
+            sentences_imported: 0,
+            eojeols_imported: 0,
+            skipped_files: 0,
+            log_lines: Vec::new(),
+            target_db_path: String::new(),
+            is_new_db_file: false,
+            newly_created_doc_ids: Vec::new(),
+            error_message: None,
+            result_summary: None,
+        }
+    }
+}
+
+pub struct DbBuildManager {
+    pub progress: DbBuildProgress,
+    pub child: Option<Child>,
+}
+
+impl DbBuildManager {
+    pub fn new() -> Self {
+        Self {
+            progress: DbBuildProgress::default(),
+            child: None,
+        }
+    }
+}
+
 struct AppState {
     root_dir: PathBuf,
     db_path: PathBuf,
@@ -843,6 +902,7 @@ struct AppState {
     memory_profile: MemoryProfile,
     latest_search_seq: AtomicU64,
     cancel_search_seq: AtomicU64,
+    db_builder: Arc<Mutex<DbBuildManager>>,
 }
 
 fn parse_query_params(url: &str) -> HashMap<String, String> {
@@ -1902,8 +1962,8 @@ fn handle_build_db(
         Err(e) => return json_response(&serde_json::json!({ "error": e.to_string() }), 400),
     };
 
-    let folder = payload.folder_path.trim();
-    if folder.is_empty() || !Path::new(folder).exists() {
+    let folder = payload.folder_path.trim().to_string();
+    if folder.is_empty() || !Path::new(&folder).exists() {
         return json_response(
             &serde_json::json!({ "error": format!("지정한 폴더가 존재하지 않습니다: {}", folder) }),
             400,
@@ -1923,48 +1983,217 @@ fn handle_build_db(
         state.db_path.clone()
     };
 
-    println!("[DB Build Request] folder={} -> db={}", folder, target_db.display());
+    let mut mgr = state.db_builder.lock().unwrap();
+    if mgr.progress.is_running {
+        return json_response(
+            &serde_json::json!({ "error": "이미 다른 DB 생성 작업이 진행 중입니다." }),
+            409,
+        );
+    }
+
+    let is_new_db = !target_db.exists();
+    mgr.progress = DbBuildProgress {
+        is_running: true,
+        status: "RUNNING".to_string(),
+        target_db_path: target_db.to_string_lossy().into_owned(),
+        is_new_db_file: is_new_db,
+        log_lines: vec![format!("[시작] 말뭉치 폴더 스캔 시작: {}", folder)],
+        ..DbBuildProgress::default()
+    };
 
     let py_script = state.root_dir.join("corpus_builder.py");
-    let output = Command::new("python")
-        .env("PYTHONUTF8", "1")
+    let target_db_str = target_db.to_string_lossy().into_owned();
+
+    let mut cmd = Command::new("python");
+    cmd.env("PYTHONUTF8", "1")
         .args([
             py_script.to_str().unwrap_or("corpus_builder.py"),
             "--folder",
-            folder,
+            &folder,
             "--db",
-            target_db.to_str().unwrap_or(""),
+            &target_db_str,
         ])
-        .output();
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
-    match output {
-        Ok(out) => {
-            let stdout_str = String::from_utf8_lossy(&out.stdout).to_string();
-            let stderr_str = String::from_utf8_lossy(&out.stderr).to_string();
-            if !out.status.success() {
-                return json_response(
-                    &serde_json::json!({
-                        "error": format!("데이터베이스 구축 실패: {}\n{}", stderr_str, stdout_str)
-                    }),
-                    500,
-                );
-            }
-            // Parse json part from output if present
-            let json_start = stdout_str.find('{');
-            let result_val: serde_json::Value = if let Some(idx) = json_start {
-                serde_json::from_str(&stdout_str[idx..]).unwrap_or_else(|_| {
-                    serde_json::json!({ "raw_output": stdout_str, "status": "ok" })
-                })
-            } else {
-                serde_json::json!({ "raw_output": stdout_str, "status": "ok" })
-            };
-            json_response(&result_val, 200)
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            mgr.progress.is_running = false;
+            mgr.progress.status = "ERROR".to_string();
+            mgr.progress.error_message = Some(e.to_string());
+            return json_response(&serde_json::json!({ "error": format!("Python 프로세스 실행 실패: {}", e) }), 500);
         }
-        Err(e) => json_response(
-            &serde_json::json!({ "error": format!("Python 실행 실패: {}", e) }),
-            500,
-        ),
+    };
+
+    let stdout = child.stdout.take();
+    mgr.child = Some(child);
+
+    let db_builder_arc = Arc::clone(&state.db_builder);
+
+    // 백그라운드 모니터링 스레드
+    std::thread::spawn(move || {
+        let mut final_json_str = String::new();
+
+        if let Some(out) = stdout {
+            let reader = BufReader::new(out);
+            for line_res in reader.lines() {
+                if let Ok(line) = line_res {
+                    if line.starts_with("PROGRESS:") {
+                        let json_part = &line["PROGRESS:".len()..];
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_part) {
+                            let mut m = db_builder_arc.lock().unwrap();
+                            if !m.progress.is_running {
+                                break;
+                            }
+                            if let Some(total) = val.get("total_files").and_then(|v| v.as_u64()) {
+                                m.progress.total_files = total as usize;
+                            }
+                            if let Some(proc) = val.get("processed_files").and_then(|v| v.as_u64()) {
+                                m.progress.processed_files = proc as usize;
+                            }
+                            if let Some(pct) = val.get("percent").and_then(|v| v.as_f64()) {
+                                m.progress.percent = pct;
+                            }
+                            if let Some(cf) = val.get("current_file").and_then(|v| v.as_str()) {
+                                m.progress.current_file = cf.to_string();
+                            }
+                            if let Some(cd) = val.get("current_doc_id").and_then(|v| v.as_str()) {
+                                if !cd.is_empty() && !m.progress.newly_created_doc_ids.contains(&cd.to_string()) {
+                                    m.progress.newly_created_doc_ids.push(cd.to_string());
+                                }
+                                m.progress.current_doc_id = cd.to_string();
+                            }
+                            if let Some(sents) = val.get("sentences_imported").and_then(|v| v.as_u64()) {
+                                m.progress.sentences_imported = sents as usize;
+                            }
+                            if let Some(eojeols) = val.get("eojeols_imported").and_then(|v| v.as_u64()) {
+                                m.progress.eojeols_imported = eojeols as usize;
+                            }
+                            if let Some(sk) = val.get("skipped_files").and_then(|v| v.as_u64()) {
+                                m.progress.skipped_files = sk as usize;
+                            }
+                            if let Some(msg) = val.get("message").and_then(|v| v.as_str()) {
+                                if !msg.is_empty() {
+                                    if m.progress.log_lines.len() >= 100 {
+                                        m.progress.log_lines.remove(0);
+                                    }
+                                    m.progress.log_lines.push(msg.to_string());
+                                }
+                            }
+                        }
+                    } else if line.starts_with('{') || !final_json_str.is_empty() {
+                        final_json_str.push_str(&line);
+                    } else if !line.trim().is_empty() {
+                        let mut m = db_builder_arc.lock().unwrap();
+                        if m.progress.log_lines.len() >= 100 {
+                            m.progress.log_lines.remove(0);
+                        }
+                        m.progress.log_lines.push(line);
+                    }
+                }
+            }
+        }
+
+        let mut m = db_builder_arc.lock().unwrap();
+        if let Some(mut ch) = m.child.take() {
+            let status_res = ch.wait();
+            if m.progress.status == "RUNNING" {
+                match status_res {
+                    Ok(st) if st.success() => {
+                        m.progress.is_running = false;
+                        m.progress.status = "COMPLETED".to_string();
+                        m.progress.percent = 100.0;
+                        m.progress.log_lines.push("[완료] 데이터베이스 생성이 성공적으로 완료되었습니다!".to_string());
+                        if let Ok(summary) = serde_json::from_str::<serde_json::Value>(&final_json_str) {
+                            m.progress.result_summary = Some(summary);
+                        }
+                    }
+                    Ok(st) => {
+                        m.progress.is_running = false;
+                        m.progress.status = "ERROR".to_string();
+                        m.progress.error_message = Some(format!("프로세스가 종료 코드 {:?}로 비정상 종료되었습니다.", st.code()));
+                    }
+                    Err(e) => {
+                        m.progress.is_running = false;
+                        m.progress.status = "ERROR".to_string();
+                        m.progress.error_message = Some(e.to_string());
+                    }
+                }
+            }
+        }
+    });
+
+    let initial_prog = mgr.progress.clone();
+    json_response(&initial_prog, 200)
+}
+
+fn handle_build_db_status(state: &AppState) -> Response<std::io::Cursor<Vec<u8>>> {
+    let mgr = state.db_builder.lock().unwrap();
+    json_response(&mgr.progress, 200)
+}
+
+fn handle_build_db_stop(state: &AppState) -> Response<std::io::Cursor<Vec<u8>>> {
+    let mut mgr = state.db_builder.lock().unwrap();
+    if !mgr.progress.is_running {
+        return json_response(&serde_json::json!({ "success": false, "message": "현재 실행 중인 DB 생성 작업이 없습니다." }), 200);
     }
+
+    if let Some(mut ch) = mgr.child.take() {
+        let _ = ch.kill();
+    }
+    mgr.progress.is_running = false;
+    mgr.progress.status = "STOPPED".to_string();
+    mgr.progress.log_lines.push("⏸ [중단] 사용자에 의해 DB 생성이 중단되었습니다. (현재까지 생성된 DB는 보존됨)".to_string());
+    json_response(&serde_json::json!({ "success": true, "status": "STOPPED", "message": "DB 생성이 중단되었습니다." }), 200)
+}
+
+fn handle_build_db_cancel(state: &AppState) -> Response<std::io::Cursor<Vec<u8>>> {
+    let mut mgr = state.db_builder.lock().unwrap();
+    if let Some(mut ch) = mgr.child.take() {
+        let _ = ch.kill();
+    }
+    mgr.progress.is_running = false;
+    mgr.progress.status = "CANCELLED".to_string();
+
+    let target_path_str = mgr.progress.target_db_path.clone();
+    let is_new_db = mgr.progress.is_new_db_file;
+    let new_doc_ids = mgr.progress.newly_created_doc_ids.clone();
+
+    if is_new_db {
+        let p = Path::new(&target_path_str);
+        if p.exists() {
+            for _ in 0..6 {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                let _ = fs::remove_file(format!("{}-wal", target_path_str));
+                let _ = fs::remove_file(format!("{}-shm", target_path_str));
+                if fs::remove_file(p).is_ok() || !p.exists() {
+                    break;
+                }
+            }
+            if !p.exists() {
+                mgr.progress.log_lines.push(format!("🗑️ [취소] 생성 중이던 신규 DB 파일({})을 삭제했습니다.", target_path_str));
+            }
+        }
+    } else {
+        if !new_doc_ids.is_empty() {
+            if let Ok(conn) = Connection::open(&target_path_str) {
+                for doc_id in &new_doc_ids {
+                    let _ = conn.execute("DELETE FROM segments WHERE doc_id = ?", params![doc_id]);
+                    let _ = conn.execute("DELETE FROM documents WHERE doc_id = ?", params![doc_id]);
+                    let _ = conn.execute("DELETE FROM source_files WHERE linked_doc_id = ?", params![doc_id]);
+                }
+                mgr.progress.log_lines.push(format!("🗑️ [취소] 이번 작업으로 추가되었던 {}개 문서를 기존 DB에서 삭제/롤백했습니다.", new_doc_ids.len()));
+            }
+        }
+    }
+
+    mgr.progress.log_lines.push("❌ [취소 완료] DB 생성이 취소되었으며 관련 데이터가 모두 정리되었습니다.".to_string());
+    json_response(&serde_json::json!({
+        "success": true,
+        "status": "CANCELLED",
+        "message": "DB 생성이 취소되었으며, 생성된 데이터가 삭제되었습니다."
+    }), 200)
 }
 
 #[derive(Debug, Serialize)]
@@ -2290,6 +2519,7 @@ fn main() {
         memory_profile: mem_profile.clone(),
         latest_search_seq: AtomicU64::new(0),
         cancel_search_seq: AtomicU64::new(0),
+        db_builder: Arc::new(Mutex::new(DbBuildManager::new())),
     });
 
     if args.iter().any(|a| a == "--self-test") {
@@ -2368,6 +2598,9 @@ fn main() {
                 (&Method::Get, "/api/source-jump") => handle_source_jump(&state, &params),
                 (&Method::Post, "/api/segment/edit") => handle_segment_edit(&state, &mut req),
                 (&Method::Post, "/api/build-db") => handle_build_db(&state, &mut req),
+                (&Method::Get, "/api/build-db/status") => handle_build_db_status(&state),
+                (&Method::Post, "/api/build-db/stop") => handle_build_db_stop(&state),
+                (&Method::Post, "/api/build-db/cancel") => handle_build_db_cancel(&state),
                 (&Method::Get, "/api/export/mapping.tsv") => serve_static_file(
                     &state.root_dir.join("db").join("corpus_db_mapping.tsv"),
                     "text/tab-separated-values; charset=utf-8",

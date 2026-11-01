@@ -45,6 +45,16 @@
       <button class="nav-tab" data-tab="tab-guide">
         📖 사용법 및 검색 방법 안내
       </button>
+
+      <!-- 전역 상단 실시간 DB 생성 진척도 인디케이터 (어느 탭에서나 상시 표시) -->
+      <div id="global-build-tracker" class="global-build-tracker" style="display:none; margin-left:auto;" title="클릭 시 DB 생성 화면으로 이동하여 상세 진척도를 확인합니다.">
+        <span class="pulse-indicator">⚡</span>
+        <span id="global-tracker-text">DB 구축 중: 0%</span>
+        <div class="mini-progress-track">
+          <div id="global-tracker-bar" class="mini-progress-fill" style="width:0%;"></div>
+        </div>
+        <button type="button" class="btn-tracker-jump">상세보기</button>
+      </div>
     </nav>
 
     <main class="main-container">
