@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>sconc v0.1 — 한국어 통시·공시 다층 말뭉치 통합 검색기</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="app-shell ratio-full" id="app-shell">
+    <header class="app-header">
+      <div class="brand-area">
+        <div>
+          <h1 class="brand-title">sconc v0.1 — 한국어 다층 말뭉치 통합 검색기 (Rust Engine)</h1>
+          <div class="brand-sub">
+            현대한글·옛한글(한컴 두벌식 옛글 &amp; 한양 PUA ↔ 유니코드 첫가끝) · 자소[초/중/종] · 형태·의미·구문 3중 연동 데이터베이스
+          </div>
+        </div>
+      </div>
+      <div class="header-badges">
+        <span class="sys-badge" id="badge-corpus-stats">말뭉치 로딩 중…</span>
+        <span class="sys-badge" id="badge-memory-tier">메모리 프로파일 측정 중…</span>
+        <select id="select-aspect-ratio" class="ratio-select" title="모니터 화면 비율 설정">
+          <option value="auto" selected>🖥️ 화면비율: 모니터 맞춤(자동 16:9 / 4:3)</option>
+          <option value="16:9">🖥️ 화면비율: 16:9 와이드</option>
+          <option value="4:3">🖥️ 화면비율: 4:3 표준</option>
+          <option value="full">🖥️ 화면비율: 창 전체 채우기</option>
+        </select>
+      </div>
+    </header>
+
+    <nav class="nav-tabs">
+      <button class="nav-tab active" data-tab="tab-search">
+        🔍 다층 말뭉치 통합 검색
+      </button>
+      <button class="nav-tab" data-tab="tab-build-db">
+        📁 말뭉치 폴더 지정 DB 생성
+      </button>
+      <button class="nav-tab" data-tab="tab-mapping">
+        🗂️ 원본 파일 ↔ 데이터베이스 매칭 테이블 (16종)
+      </button>
+      <button class="nav-tab" data-tab="tab-docs">
+        📚 구축 데이터베이스 문서 목록 (13종)
+      </button>
+      <button class="nav-tab" data-tab="tab-guide">
+        📖 사용법 및 검색 방법 안내
+      </button>
+    </nav>
+
+    <main class="main-container">
+      <!-- TAB 1: SEARCH & COLLAPSIBLE MULTI-LAYER INSPECTOR -->
+      <section id="tab-search" class="tab-panel active">
+        <div class="search-card">
+          <!-- 윗줄 (Row 1): 가로 한 줄 검색 옵션 바 -->
+          <div class="search-options-bar">
+            <div class="opt-pill">
+              <label for="select-mode">검색방식</label>
+              <select id="select-mode">
+                <option value="all">통합(원문·자소·형태·의미·구문)</option>
+                <option value="surface">원문/옛한글 표층</option>
+                <option value="jamo">자소 [초/중/종] · 초성</option>
+                <option value="morph">형태소/품사 (예: 세계/NNG)</option>
+                <option value="sense">형태의미 (예: 세계__02)</option>
+                <option value="syntax">구문표지 (예: NP_SBJ)</option>
+                <option value="regex">정규표현식 (Regex)</option>
+              </select>
+            </div>
+
+            <div class="opt-pill">
+              <label for="select-layer">연동필터</label>
+              <select id="select-layer">
+                <option value="ALL">전체 말뭉치 (40,343문장)</option>
+                <option value="TRIPLE">★ 형태+의미+구문 3중연동</option>
+                <option value="OLD_HANGUL">📜 옛한글 문헌 (3종)</option>
+                <option value="MORPH">형태분석 포함</option>
+                <option value="SENSE">의미분석 포함</option>
+                <option value="SYNTAX">구문분석 포함</option>
+              </select>
+            </div>
+
+            <div class="opt-pill">
+              <label for="select-doc">문서지정</label>
+              <select id="select-doc" style="max-width: 195px;">
+                <option value="ALL">전체 문서 (13종)</option>
+              </select>
+            </div>
+
+            <div class="opt-pill">
+              <label for="select-context-words">좌우문맥</label>
+              <select id="select-context-words">
+                <option value="3">좌우 3어절</option>
+                <option value="5" selected>좌우 5어절 (기본)</option>
+                <option value="7">좌우 7어절</option>
+                <option value="10">좌우 10어절</option>
+                <option value="999">문장 전체</option>
+              </select>
+            </div>
+
+            <div class="opt-pill">
+              <label for="select-limit">최대건수</label>
+              <select id="select-limit">
+                <option value="100">100건</option>
+                <option value="500" selected>500건 (기본)</option>
+                <option value="1000">1,000건</option>
+                <option value="5000">5,000건</option>
+                <option value="0">무제한 (전체)</option>
+              </select>
+            </div>
+
+            <div class="opt-pill">
+              <label for="select-corpus-font">문서폰트</label>
+              <select id="select-corpus-font">
+                <option value="kopub" selected>KoPubWorld 돋움 (기본)</option>
+                <option value="hanbatang">함초롬바탕 (옛한글/명조)</option>
+                <option value="malgun">맑은 고딕 (시스템)</option>
+                <option value="batang">바탕체 (시스템 명조)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- 아랫줄 (Row 2): 검색어 입력 및 실행/종료 버튼 -->
+          <div class="search-input-row">
+            <div class="search-input-wrap">
+              <input
+                type="text"
+                id="search-input"
+                placeholder="검색어 입력 — 예: 하ᄂᆞᆯ, [ㄱ/ㅏ/ㅇ], [ㄱ/*/ㅇ], 세계__02, NP_SBJ, ㄴ/ETM (자세한 문법은 상단 [📖 사용법] 참조)"
+                autocomplete="off"
+              />
+            </div>
+            <button class="btn btn-primary" id="btn-search" type="button">
+              🔍 검색
+            </button>
+            <button class="btn btn-danger" id="btn-cancel-search" type="button" style="display: none;" title="실행 중인 정규식/대용량 검색을 즉시 중단합니다.">
+              ⏹ 검색 종료
+            </button>
+            <button class="btn btn-old-toggle" id="btn-toggle-old-ime" type="button" title="켜면 한컴오피스 두벌식 옛글 방식(ㅏ×2=ㆍ, Shift+F=ㅿ, Shift+D=ㆁ, ㅂ+ㅇ=ㅸ 등)으로 조합됩니다.">
+              ⌨️ 옛한글 입력: OFF
+            </button>
+            <button class="btn btn-outline" id="btn-toggle-jamo-pad" type="button" title="마우스로 옛글 자모를 클릭해 입력할 수 있는 소형 자판을 여닫습니다.">
+              🧮 옛글 낱자판
+            </button>
+            <button class="btn btn-outline" id="btn-clear-input" type="button">
+              ✕ 지우기
+            </button>
+          </div>
+
+          <!-- 선택형 소형 옛글 낱자판 (기본값: 숨김) -->
+          <div class="jamo-mini-pad" id="jamo-mini-pad">
+            <span style="font-size:0.75rem; font-weight:700; color:#6b21a8; margin-right:4px;" id="kb-automata-status">옛글 낱자 클릭:</span>
+            <button type="button" class="jamo-btn" data-type="V" data-name="ARAEA">ㆍ <small>ㅏ×2</small></button>
+            <button type="button" class="jamo-btn" data-type="V_SEQ" data-seq="ARAEA,ARAEA">ᆢ <small>ㅏ×3</small></button>
+            <button type="button" class="jamo-btn" data-type="V_SEQ" data-seq="ARAEA,I">ㆎ <small>ㆍ+ㅣ</small></button>
+            <button type="button" class="jamo-btn" data-type="L" data-name="PANSIOS">ㅿ <small>Shift+F</small></button>
+            <button type="button" class="jamo-btn" data-type="L" data-name="YESIEUNG">ㆁ <small>Shift+D</small></button>
+            <button type="button" class="jamo-btn" data-type="L" data-name="YEORINHIEUH">ㆆ <small>Shift+G</small></button>
+            <button type="button" class="jamo-btn" data-type="L" data-name="KAPYEOUNPIEUP">ㅸ <small>ㅂ+ㅇ</small></button>
+            <button type="button" class="jamo-btn" data-type="L" data-name="KAPYEOUNMIEUM">ㅱ <small>ㅁ+ㅇ</small></button>
+            <button type="button" class="jamo-btn" data-type="L" data-name="KAPYEOUNPHIEUPH">ㆄ <small>ㅍ+ㅇ</small></button>
+            <button type="button" class="jamo-btn" data-type="L" data-name="KAPYEOUNRIEUL">ᄛ <small>ㄹ+ㅇ</small></button>
+            <button type="button" class="jamo-btn" data-type="L" data-name="CHITUEUMSIOS">ᄼ <small>Shift+Z</small></button>
+            <button type="button" class="jamo-btn" data-type="L" data-name="CEONGCHIEUMSIOS">ᄾ <small>Shift+X</small></button>
+            <button type="button" class="jamo-btn" data-type="L" data-name="CHITUEUMCIEUC">ᅎ <small>Shift+A</small></button>
+            <button type="button" class="jamo-btn" data-type="L" data-name="CEONGCHIEUMCIEUC">ᅐ <small>Shift+S</small></button>
+            <button type="button" class="jamo-btn" data-type="TONE" data-level="1">〮 <small>거성</small></button>
+            <button type="button" class="jamo-btn" data-type="TONE" data-level="2">〯 <small>상성</small></button>
+          </div>
+        </div>
+
+        <!-- 검색 결과(KWIC) + 다중 탭(최대 10개) + 폴딩형 다층 주석 연동 상세 뷰어 -->
+        <div class="results-area">
+          <div class="panel-card kwic-panel">
+            <!-- 검색 결과 다중 탭 바 (최대 10개 탭 전환 및 비교) -->
+            <div class="kwic-tabs-bar" id="kwic-tabs-bar">
+              <!-- 탭들이 동적으로 생성됩니다 -->
+            </div>
+
+            <div class="panel-header">
+              <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                <h2 class="panel-title" id="kwic-result-title">용례 검색 결과 (KWIC · 기본 좌우 5어절)</h2>
+                <span id="kwic-result-meta" style="font-size:0.78rem; color:#475569;">검색어를 입력해 검색을 실행하세요.</span>
+              </div>
+              <div class="kwic-header-actions">
+                <div class="subsearch-wrap">
+                  <input type="text" id="subsearch-input" placeholder="🔍 결과 내 재검색 (단어, 형태소, 문서명...)" />
+                  <button type="button" class="btn btn-outline" id="btn-subsearch">필터</button>
+                  <button type="button" class="btn btn-outline" id="btn-subsearch-reset" style="display:none;">✕ 초기화</button>
+                  <span id="subsearch-count-badge" class="subsearch-badge" style="display:none;"></span>
+                </div>
+                <button type="button" class="btn btn-outline" id="btn-export-kwic-txt" title="현재 탭의 용례 검색 결과를 텍스트 파일(.txt)로 저장합니다.">
+                  💾 결과 TXT 저장
+                </button>
+              </div>
+            </div>
+            <div class="kwic-table-wrap">
+              <table class="kwic-table">
+                <thead>
+                  <tr>
+                    <th style="width:130px;">문서 / 위치</th>
+                    <th style="width:95px;">연동 주석층</th>
+                    <th style="text-align:right;">좌측 문맥 (Left Context)</th>
+                    <th style="text-align:center;">핵심어 (Node)</th>
+                    <th>우측 문맥 (Right Context)</th>
+                  </tr>
+                </thead>
+                <tbody id="kwic-tbody">
+                  <tr>
+                    <td colspan="5" style="text-align:center; padding:36px; color:#64748b;">
+                      상단 검색창에 검색어를 입력해 검색을 실행하세요. (마우스 우클릭 시 원문 텍스트 파일 점프 및 다층 주석 연동 확인)
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 폴딩 방식 다층 주석 연동 상세 뷰어 (기본값: 접힘) -->
+          <div class="inspector-fold-card" id="inspector-fold-card">
+            <div class="inspector-fold-header" id="inspector-fold-header" title="클릭하여 다층 주석 연동 상세 뷰어를 펼치거나 접습니다.">
+              <div class="fold-title-wrap">
+                <span id="inspector-fold-arrow">▶</span>
+                <span>🔗 다층 주석 연동 상세 뷰어 (원문 · 형태 · 형태의미 · 구문 트리)</span>
+                <span id="inspector-selected-summary" style="font-weight:400; font-size:0.78rem; opacity:0.85;">
+                  — (현재 접혀 있음 · 클릭하여 펼치기)
+                </span>
+              </div>
+              <div style="display:flex; gap:6px; align-items:center;" onclick="event.stopPropagation();">
+                <button type="button" class="btn btn-outline" id="btn-toggle-edit" style="padding:3px 9px; font-size:0.74rem; display:none;">
+                  ✏️ DB 직접 수정
+                </button>
+                <button type="button" class="btn btn-outline" id="btn-fold-toggle-btn" style="padding:3px 9px; font-size:0.74rem;">
+                  펼치기 ▾
+                </button>
+              </div>
+            </div>
+            <div class="inspector-body" id="inspector-body">
+              <div style="text-align:center; padding:24px; color:#64748b;">
+                위 KWIC 검색 결과에서 문장을 선택하면 연동된 <strong>원문(유니코드/한양 PUA)</strong>, <strong>형태소 분석</strong>, <strong>형태의미(어깨번호) 분석</strong>, <strong>구문 분석 트리(S-식)</strong> 및 <strong>앞뒤 문맥</strong>이 표시됩니다.
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB: CORPUS FOLDER DB BUILDER -->
+      <section id="tab-build-db" class="tab-panel">
+        <div class="panel-card" style="flex:1;">
+          <div class="panel-header">
+            <div>
+              <h2 class="panel-title">📁 원본 말뭉치 폴더 지정 ↔ 데이터베이스 자동 변환 및 구축</h2>
+              <div style="font-size:0.78rem; color:#475569; margin-top:2px;">
+                사용자가 지정한 폴더 내의 말뭉치 텍스트 유형(세종 3중 연동, 역사 언해문, 외국어 학습서, 옛한글 사전, 구어/문어, JSON 등)을 자동으로 분석하여 통합 데이터베이스(.corpdb)를 생성합니다.
+              </div>
+            </div>
+          </div>
+          <div style="padding:16px 20px; overflow-y:auto; flex:1;">
+            <div class="builder-form-card">
+              <div class="builder-form-row">
+                <label for="builder-folder-path"><strong>말뭉치 폴더 절대/상대 경로:</strong></label>
+                <input type="text" id="builder-folder-path" value="c:\AG\concordance\sample" placeholder="예: c:\AG\concordance\sample 또는 원하는 말뭉치 폴더" />
+              </div>
+              <div class="builder-form-row">
+                <label for="builder-db-name"><strong>생성/저장할 DB 파일명:</strong></label>
+                <input type="text" id="builder-db-name" value="concordance.corpdb" placeholder="예: concordance.corpdb 또는 historical.corpdb" />
+                <span style="font-size:0.75rem; color:#64748b;">(기본 DB에 증분 갱신하거나 새 이름으로 모듈형 DB 생성 가능)</span>
+              </div>
+              <div style="display:flex; gap:10px; align-items:center; margin-top:12px;">
+                <button type="button" class="btn btn-primary" id="btn-start-build" style="padding:8px 18px; font-weight:700;">
+                  🚀 데이터베이스 생성 시작
+                </button>
+                <span id="builder-status-badge" style="font-size:0.82rem; font-weight:700; color:#2563eb; display:none;">
+                  ⏳ 폴더 내 말뭉치 파일 분석 및 DB 구축 중… 잠시만 기다려 주세요.
+                </span>
+              </div>
+            </div>
+
+            <!-- 구축 진행 로그 및 결과 요약 -->
+            <div id="builder-result-area" style="margin-top:18px; display:none;">
+              <div class="builder-summary-banner" id="builder-summary-banner"></div>
+              <h3 style="font-size:0.92rem; font-weight:700; margin:16px 0 8px 0; color:#1e293b;">
+                📋 분석 및 구축 완료된 말뭉치 파일 목록
+              </h3>
+              <table class="kwic-table" style="background:#ffffff; border:1px solid #cbd5e1; border-radius:6px; overflow:hidden;">
+                <thead>
+                  <tr>
+                    <th>문서 ID</th>
+                    <th>자동 판별된 말뭉치 유형</th>
+                    <th>포함된 원본 파일명</th>
+                    <th style="text-align:right;">추출된 문장 수</th>
+                  </tr>
+                </thead>
+                <tbody id="builder-items-tbody"></tbody>
+              </table>
+              <div style="margin-top:16px; text-align:right;">
+                <button type="button" class="btn btn-primary" id="btn-jump-to-search" style="padding:8px 16px;">
+                  🔍 생성된 데이터베이스로 검색하기 →
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 2: SOURCE FILE <-> DATABASE MAPPING TABLE -->
+      <section id="tab-mapping" class="tab-panel">
+        <div class="panel-card" style="flex:1;">
+          <div class="panel-header">
+            <div>
+              <h2 class="panel-title">🗂️ 원본 말뭉치 파일(16종) ↔ 고유 데이터베이스(`db/concordance.corpdb`) 매칭 및 유형 명세표</h2>
+              <div style="font-size:0.78rem; color:#475569; margin-top:2px;">
+                동일 원문을 공유하는 <strong>BTAA0001.txt(형태) + BSAA0001.txt(형태의미) + BGAA0001.txt(구문)</strong>은 <code>BRAA0001_LINKED</code>로,
+                <strong>sample_131.txt(원시) + sample_131.xml(형태)</strong>은 <code>SAMPLE_131_LINKED</code>로 단일 원문 레코드에 다층 연동되었습니다.
+              </div>
+            </div>
+            <div style="display:flex; gap:8px;">
+              <a href="/api/export/mapping.tsv" download="corpus_db_mapping.tsv" class="btn btn-primary" style="text-decoration:none; font-size:0.78rem;">
+                ⬇️ TSV 다운로드 (corpus_db_mapping.tsv)
+              </a>
+              <a href="/api/export/mapping.json" download="corpus_db_mapping.json" class="btn btn-outline" style="text-decoration:none; font-size:0.78rem;">
+                ⬇️ JSON 다운로드 (corpus_db_mapping.json)
+              </a>
+            </div>
+          </div>
+          <div class="scrollable-card-body">
+            <table class="mapping-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>원본 파일명</th>
+                  <th>원본 인코딩</th>
+                  <th>텍스트 표기 형식</th>
+                  <th>말뭉치 유형</th>
+                  <th>원문 표기 방식</th>
+                  <th>분석 결과 표기 방식</th>
+                  <th>연동된 DB 문서 ID</th>
+                  <th>대상 DB 파일</th>
+                  <th>문장 수</th>
+                  <th>어절 수</th>
+                </tr>
+              </thead>
+              <tbody id="mapping-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 3: UNIFIED DOCUMENTS LIST -->
+      <section id="tab-docs" class="tab-panel">
+        <div class="panel-card" style="flex:1;">
+          <div class="panel-header">
+            <h2 class="panel-title">📚 구축된 통합 문서 그룹 목록 (총 13개 문서 그룹 · 클릭 시 해당 문서 전체 열람)</h2>
+          </div>
+          <div class="scrollable-card-body">
+            <table class="mapping-table">
+              <thead>
+                <tr>
+                  <th>DB 문서 ID (`doc_id`)</th>
+                  <th>문서 제목</th>
+                  <th>말뭉치 분류</th>
+                  <th>포함 주석 층위</th>
+                  <th>연동된 원본 파일 (`sample/`)</th>
+                  <th>문장 수</th>
+                  <th>어절 수</th>
+                  <th>동작</th>
+                </tr>
+              </thead>
+              <tbody id="docs-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 4: USAGE & SEARCH GUIDE (자소 검색 · 옛한글 입력법 · 다층 검색 · 원클릭 예시) -->
+      <section id="tab-guide" class="tab-panel">
+        <div class="panel-card" style="flex:1;">
+          <div class="panel-header">
+            <h2 class="panel-title">📖 사용법 및 검색 방법 안내 (자소 검색 `[초/중/종]` · 한컴 두벌식 옛글 입력법 · 원클릭 예시 실행)</h2>
+          </div>
+          <div class="scrollable-card-body">
+            <div class="guide-grid">
+              <!-- 1. 자소 대괄호 [초/중/종] 검색 문법 -->
+              <div class="guide-box">
+                <h3>1. 대괄호 자소 검색 문법 (`[초성/중성/종성]` 및 `*`, `?`, `+`)</h3>
+                <p style="font-size:0.82rem; margin:0 0 8px 0; color:#334155;">
+                  음절을 대괄호 <code>[ ]</code> 안에 표기하고 초성·중성·종성을 슬래시(<code>/</code>)로 구분하여 검색합니다.
+                  초·중·종성 어느 위치에나 와일드카드 문자 <code>*</code>, <code>?</code>, <code>+</code>를 자유롭게 조합할 수 있습니다.
+                </p>
+                <table class="guide-table">
+                  <thead>
+                    <tr>
+                      <th style="width:110px;">기호 / 표기</th>
+                      <th>의미 및 매칭 범위</th>
+                      <th style="width:140px;">검색식 예시</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><code>[초/중/종]</code></td>
+                      <td>초성·중성·종성이 지정한 자소와 일치하는 음절</td>
+                      <td><code>[ㄱ/ㅏ/ㅇ]</code> → <strong>강</strong></td>
+                    </tr>
+                    <tr>
+                      <td><code>*</code> (별표)</td>
+                      <td>0개 이상의 모든 자소 허용 (종성에 쓰면 받침 유무 무관 전체 허용)</td>
+                      <td><code>[ㄱ/*/ㅇ]</code> → <strong>강, 공, 궁, 경, 광…</strong><br/><code>[ㄱ/ㅏ/*]</code> → <strong>가, 각, 간, 강, 값…</strong></td>
+                    </tr>
+                    <tr>
+                      <td><code>?</code> (물음표)</td>
+                      <td>임의의 자소 1개 매칭 (초·중성에 단독 <code>?</code> 사용 시 모든 초·중성 허용, 합용병서 <code>ㅅ?</code>는 2자 병서 매칭)</td>
+                      <td><code>[?/ㅏ/ㅇ]</code> → <strong>강, 당, 방, 상, 장…</strong><br/><code>[ㄱ/ㅏ/?]</code> → 홑받침(각, 간, 강…)</td>
+                    </tr>
+                    <tr>
+                      <td><code>+</code> (더하기)</td>
+                      <td>1개 이상의 자소가 <strong>반드시 존재</strong>해야 함 (종성에 쓰면 <strong>받침이 있는 음절만</strong> 매칭)</td>
+                      <td><code>[ㄱ/ㅏ/+]</code> → <strong>각, 간, 강, 값…</strong> (무받침 '가' 제외)</td>
+                    </tr>
+                    <tr>
+                      <td><code>[초/중/]</code></td>
+                      <td>종성 자리를 비우면 <strong>받침이 없는 음절(무받침)</strong>만 매칭</td>
+                      <td><code>[ㅎ/ㅏ/][ㄴ/ㆍ/ㄹ]</code> → <strong>하ᄂᆞᆯ</strong></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- 2. 한글과컴퓨터 두벌식 옛글 입력법 -->
+              <div class="guide-box">
+                <h3>2. 한글과컴퓨터(한컴오피스) 두벌식 옛글 입력법 안내</h3>
+                <p style="font-size:0.82rem; margin:0 0 8px 0; color:#334155;">
+                  검색창 우측의 <strong>[⌨️ 옛한글 입력: ON]</strong> 버튼을 켜면 OS 한/영 상태와 무관하게 한컴 두벌식 옛글 타건 규칙으로 즉시 조합됩니다.
+                </p>
+                <table class="guide-table">
+                  <thead>
+                    <tr>
+                      <th style="width:120px;">입력 대상 옛글자</th>
+                      <th>타건 방법 (한컴 두벌식 옛글)</th>
+                      <th>단어 입력 예시</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><strong>ㆍ</strong> (아래아)<br/><strong>ᆢ</strong> (쌍아래아)</td>
+                      <td><code>k</code>(ㅏ) 연속 2회 타건 = <strong>ㆍ</strong> (또는 <code>Shift + K</code>)<br/><code>k</code>(ㅏ) 연속 3회 타건 = <strong>ᆢ</strong> / <code>ㆍ</code> + <code>l</code>(ㅣ) = <strong>ㆎ</strong></td>
+                      <td><code>g k s k k f</code> → <strong>하ᄂᆞᆯ</strong><br/><code>t k f k k a</code> → <strong>사ᄅᆞᆷ</strong></td>
+                    </tr>
+                    <tr>
+                      <td><strong>ㅿ · ㆁ · ㆆ</strong></td>
+                      <td><code>Shift + F</code> = <strong>ㅿ(반치음)</strong> · <code>Shift + D</code> = <strong>ㆁ(옛이응)</strong> · <code>Shift + G</code> = <strong>ㆆ(여린히읗)</strong></td>
+                      <td><code>d u e Shift+F k k d h k</code> → <strong>엳ᄌᆞ와</strong></td>
+                    </tr>
+                    <tr>
+                      <td><strong>ㅸ · ㅱ · ㆄ · ᄛ · ㅹ</strong><br/>(순경음 연서)</td>
+                      <td>입술소리 뒤에 <code>d</code>(ㅇ)를 연이어 타건:<br/><code>ㅂ+ㅇ</code>=<strong>ㅸ</strong>, <code>ㅁ+ㅇ</code>=<strong>ㅱ</strong>, <code>ㅍ+ㅇ</code>=<strong>ㆄ</strong>, <code>ㄹ+ㅇ</code>=<strong>ᄛ</strong>, <code>ㅃ+ㅇ</code>=<strong>ㅹ</strong></td>
+                      <td><code>t n q d l</code> → <strong>수ᄫᅵ</strong></td>
+                    </tr>
+                    <tr>
+                      <td><strong>합용병서 / 각자병서</strong><br/>(ᄡ, ᄞ, ᄢ, ᄭ, ᅇ 등)</td>
+                      <td>초성이나 종성 자리에서 자음을 연속 타건:<br/><code>ㅂ+ㅅ</code>=<strong>ᄡ</strong>, <code>ㅂ+ㄷ</code>=<strong>ᄞ</strong>, <code>ㅂ+ㅅ+ㄱ</code>=<strong>ᄢ</strong>, <code>ㅅ+ㄱ</code>=<strong>ᄭ</strong>, <code>ㅇ+ㅇ</code>=<strong>ᅇ</strong></td>
+                      <td><code>q t e n t</code> → <strong>ᄡᅳᆺ</strong></td>
+                    </tr>
+                    <tr>
+                      <td><strong>치두음 · 정치음 · 방점</strong></td>
+                      <td><code>Shift+Z/X</code>=<strong>ᄼ/ᄾ</strong>, <code>Shift+A/S</code>=<strong>ᅎ/ᅐ</strong>, <code>Shift+C/V</code>=<strong>ᅔ/ᅕ</strong><br/><code>Shift+Y</code>=<strong>거성(〮)</strong>, <code>Shift+U</code>=<strong>상성(〯)</strong></td>
+                      <td>화상 자판(<code>🧮 옛글 낱자판</code>) 클릭 입력도 지원</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- 3. 다층 주석(형태·의미·구문) 및 정규식 검색 안내 -->
+              <div class="guide-box">
+                <h3>3. 형태소 · 형태의미(어깨번호) · 구문 표지 · 정규식 검색법</h3>
+                <table class="guide-table">
+                  <thead>
+                    <tr>
+                      <th style="width:120px;">검색 방식</th>
+                      <th>설명 및 문법</th>
+                      <th>검색어 예시</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><strong>형태소 / 품사</strong></td>
+                      <td><code>형태소/품사태그</code> 또는 <code>/품사태그</code> 입력. 첫가끝 종성(<code>ᆫ/ETM</code>)과 호환자모(<code>ㄴ/ETM</code>)를 자동 통합 매칭합니다.</td>
+                      <td><code>교양/NNG</code>, <code>ㄴ/ETM</code>, <code>하/XSV</code></td>
+                    </tr>
+                    <tr>
+                      <td><strong>형태의미 (어깨번호)</strong></td>
+                      <td>세종 형태의미 말뭉치의 표준국어대사전 어깨번호(<code>단어__번호</code> 또는 <code>단어__번호/품사</code>)로 동음이의어를 구별 검색합니다.</td>
+                      <td><code>세계__02</code>, <code>생각__01/NNG</code>, <code>일__01</code></td>
+                    </tr>
+                    <tr>
+                      <td><strong>구문분석 표지</strong></td>
+                      <td>세종 구문분석 트리뱅크(S-식)의 구문 표지(예: 주어 <code>NP_SBJ</code>, 목적어 <code>NP_OBJ</code>, 관형절 <code>VP_MOD</code>)로 검색합니다.</td>
+                      <td><code>NP_SBJ</code>, <code>VP_MOD</code>, <code>NP_OBJ</code></td>
+                    </tr>
+                    <tr>
+                      <td><strong>정규표현식 (Regex)</strong></td>
+                      <td>표준 정규식을 사용하여 패턴 검색을 수행합니다. 실행 시간이 길어질 경우 우측 <strong>[⏹ 검색 종료]</strong> 버튼으로 즉시 중단할 수 있습니다.</td>
+                      <td><code>[가-힣]+에서\s+[가-힣]+으로</code></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- 4. 원클릭 예시 검색 실행 -->
+              <div class="guide-box">
+                <h3>4. ⚡ 원클릭 예시 검색 (클릭 시 검색 화면으로 이동하여 즉시 실행)</h3>
+                <p style="font-size:0.82rem; margin:0 0 10px 0; color:#334155;">
+                  아래 예시 버튼을 클릭하면 검색창에 해당 식이 자동으로 입력되며 즉시 결과를 확인하실 수 있습니다.
+                </p>
+                <div style="margin-bottom:8px;">
+                  <strong style="font-size:0.78rem; color:#1e40af;">[자소 `[초/중/종]` 및 와일드카드 검색 예시]</strong><br/>
+                  <button type="button" class="preset-chip" data-q="[ㄱ/ㅏ/ㅇ]" data-mode="jamo" data-layer="ALL"><code>[ㄱ/ㅏ/ㅇ]</code> (강)</button>
+                  <button type="button" class="preset-chip" data-q="[ㄱ/*/ㅇ]산" data-mode="jamo" data-layer="ALL"><code>[ㄱ/*/ㅇ]산</code> (강산·공산·경산…)</button>
+                  <button type="button" class="preset-chip" data-q="[?/ㅏ/ㅇ]산" data-mode="jamo" data-layer="ALL"><code>[?/ㅏ/ㅇ]산</code> (초성 임의 + ㅏ + ㅇ + 산)</button>
+                  <button type="button" class="preset-chip" data-q="[ㅎ/ㅏ/][ㄴ/ㆍ/ㄹ]" data-mode="jamo" data-layer="OLD_HANGUL"><code>[ㅎ/ㅏ/][ㄴ/ㆍ/ㄹ]</code> (옛한글 하ᄂᆞᆯ)</button>
+                  <button type="button" class="preset-chip" data-q="[ㅅ/ㅏ/][ㄹ/ㆍ/+]" data-mode="jamo" data-layer="OLD_HANGUL"><code>[ㅅ/ㅏ/][ㄹ/ㆍ/+]</code> (옛한글 사ᄅᆞᆷ 등 받침 필수)</button>
+                </div>
+                <div style="margin-bottom:8px;">
+                  <strong style="font-size:0.78rem; color:#6b21a8;">[옛한글 문헌 (간이벽온방 · 첩해신어 · 훈몽자회) 검색 예시]</strong><br/>
+                  <button type="button" class="preset-chip" data-q="하ᄂᆞᆯ" data-mode="all" data-layer="OLD_HANGUL">옛한글: 하ᄂᆞᆯ (훈몽자회)</button>
+                  <button type="button" class="preset-chip" data-q="사ᄅᆞᆷ" data-mode="all" data-layer="OLD_HANGUL">옛한글: 사ᄅᆞᆷ (간이벽온방·훈몽자회)</button>
+                  <button type="button" class="preset-chip" data-q="ᄒᆞ야" data-mode="all" data-layer="OLD_HANGUL">옛한글: ᄒᆞ야 (간이벽온방·첩해신어)</button>
+                  <button type="button" class="preset-chip" data-q="엳ᄌᆞ와" data-mode="all" data-layer="OLD_HANGUL">옛한글(ㅿ): 엳ᄌᆞ와 (첩해신어)</button>
+                </div>
+                <div>
+                  <strong style="font-size:0.78rem; color:#065f46;">[형태 · 형태의미 · 구문 3중 연동 및 자모통합 검색 예시]</strong><br/>
+                  <button type="button" class="preset-chip" data-q="세계__02" data-mode="sense" data-layer="TRIPLE">3중연동(의미): 세계__02</button>
+                  <button type="button" class="preset-chip" data-q="생각__01/NNG" data-mode="sense" data-layer="TRIPLE">3중연동(의미): 생각__01/NNG</button>
+                  <button type="button" class="preset-chip" data-q="NP_SBJ" data-mode="syntax" data-layer="TRIPLE">3중연동(구문): NP_SBJ</button>
+                  <button type="button" class="preset-chip" data-q="교양/NNG" data-mode="morph" data-layer="TRIPLE">3중연동(형태): 교양/NNG</button>
+                  <button type="button" class="preset-chip" data-q="ㄴ/ETM" data-mode="morph" data-layer="ALL">자모통합 형태검색: ㄴ/ETM (첫가끝 ᆫ/ETM 동시매칭)</button>
+                  <button type="button" class="preset-chip" data-q="마당/NNG" data-mode="morph" data-layer="ALL">학습자연동(sample_131): 마당/NNG</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- 마우스 우클릭 컨텍스트 메뉴 -->
+  <div id="kwic-context-menu" class="context-menu" style="display:none;">
+    <div class="context-menu-item" id="ctx-jump">
+      <span>📄</span> <strong>원본 파일에서 이 문장 위치 보기 (점프)</strong>
+    </div>
+    <div class="context-menu-item" id="ctx-detail">
+      <span>🔗</span> <strong>다층 주석 연동 상세 뷰어 펼치기</strong>
+    </div>
+    <div class="context-menu-item" id="ctx-copy">
+      <span>📋</span> 원문 문장 복사
+    </div>
+  </div>
+
+  <!-- 원본 파일 점프 뷰어 모달 (Source Jump Modal) -->
+  <div id="modal-source-jump" class="modal-overlay" style="display:none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 class="modal-title" id="modal-jump-title">📄 원본 텍스트 파일 위치 점프 뷰어</h3>
+        <button type="button" class="modal-close" id="btn-close-jump-modal">✕</button>
+      </div>
+      <div class="modal-meta-bar" id="modal-jump-meta">
+        로딩 중...
+      </div>
+      <div class="jump-code-wrap" id="modal-jump-lines">
+        <!-- 원본 파일 전후 줄바꿈 라인들이 표시됩니다 -->
+      </div>
+      <div class="modal-footer">
+        <span style="font-size:0.75rem; color:#64748b;">(하이라이트된 줄이 현재 검색된 문장입니다)</span>
+        <div style="display:flex; gap:8px;">
+          <button type="button" class="btn btn-outline" id="btn-copy-jump-text">📋 표시 영역 복사</button>
+          <button type="button" class="btn btn-primary" id="btn-close-jump-modal-bottom">닫기</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/hangul_automata.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

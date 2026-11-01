@@ -1,0 +1,40 @@
+# Databases & corpdb files
+db/
+*.corpdb
+*.db
+*.sqlite
+*.sqlite3
+
+# Rust build target
+target/
+engine/target/
+
+# Python cache & temp
+__pycache__/
+*.py[cod]
+*$py.class
+scratch/
+
+# User private sample corpus & internal worklog/requirements docs
+sample/
+REQUIREMENTS.md
+ARCHITECTURE.md
+WORKLOG.md
+*.pdf
+CORPUS_DB_MAPPING.md
+build_sample_db.py
+/KoPubWorld Dotum*
+/run_concordance.*
+
+# External 97MB bundle (extracted essentials are in assets/)
+HNI_MMK_Kug_1.2/
+HNI_MMK_Kug_1.2.zip
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.bak
+*.log
+.vscode/
+.idea/
