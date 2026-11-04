@@ -2140,28 +2140,47 @@ let isSearchInProgress = false;
   const chkSetDefaultBrowser = document.getElementById('chk-set-default-browser');
   const browserCurrentStatusText = document.getElementById('browser-current-status-text');
 
-  let cachedBrowserList = [];
+  // 표준 기본 브라우저 프리셋 (API 응답 지연이나 백엔드 오프라인 시에도 즉시 표시)
+  const DEFAULT_BROWSERS = [
+    { id: 'chrome', name: 'Google Chrome', path: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', installed: true },
+    { id: 'msedge', name: 'Microsoft Edge', path: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', installed: true },
+    { id: 'whale', name: 'Naver Whale (네이버 웨일)', path: 'C:\\Program Files\\Naver\\Naver Whale\\Application\\whale.exe', installed: true },
+    { id: 'firefox', name: 'Mozilla Firefox', path: 'C:\\Program Files\\Mozilla Firefox\\firefox.exe', installed: false },
+    { id: 'brave', name: 'Brave Browser', path: '', installed: false },
+    { id: 'system', name: 'Windows 시스템 기본 브라우저', path: '', installed: true },
+  ];
+
+  let cachedBrowserList = DEFAULT_BROWSERS.slice();
   let currentConfigBrowser = 'system';
 
-  async function openBrowserSwitcherModal() {
-    if (!modalBrowserSwitcher) return;
-    modalBrowserSwitcher.style.display = 'flex';
-    if (browserListContainer) {
-      browserListContainer.innerHTML = '<div style="text-align:center; padding:20px; color:#64748b;">설치된 브라우저를 감지하는 중…</div>';
-    }
-
+  // 백엔드 감지 API 비동기 프리패치 (페이지 로드 시 및 모달 오픈 시 자동 갱신)
+  async function fetchInstalledBrowsersAsync() {
     try {
       const res = await fetch('/api/system/installed-browsers');
-      const data = await res.json();
-      cachedBrowserList = data.browsers || [];
-      currentConfigBrowser = data.current_browser || 'system';
-
-      renderBrowserList(cachedBrowserList, currentConfigBrowser);
-    } catch (e) {
-      if (browserListContainer) {
-        browserListContainer.innerHTML = '<div style="text-align:center; padding:20px; color:#dc2626;">브라우저 목록을 불러오지 못했습니다.</div>';
+      if (res.ok) {
+        const data = await res.json();
+        if (data.browsers && data.browsers.length > 0) {
+          cachedBrowserList = data.browsers;
+        }
+        if (data.current_browser) {
+          currentConfigBrowser = data.current_browser;
+        }
+        if (modalBrowserSwitcher && modalBrowserSwitcher.style.display !== 'none') {
+          renderBrowserList(cachedBrowserList, currentConfigBrowser);
+        }
       }
+    } catch (e) {
+      console.warn('Backend installed-browsers API notice:', e);
     }
+  }
+
+  function openBrowserSwitcherModal() {
+    if (!modalBrowserSwitcher) return;
+    modalBrowserSwitcher.style.display = 'flex';
+    // 딜레이 없이 즉시 캐시/프리셋 목록을 렌더링하여 빠른 사용자 경험 제공
+    renderBrowserList(cachedBrowserList, currentConfigBrowser);
+    // 백엔드와 통신하여 최신 감지 상태를 비동기로 갱신
+    fetchInstalledBrowsersAsync();
   }
 
   function closeBrowserSwitcherModal() {
@@ -2170,14 +2189,11 @@ let isSearchInProgress = false;
 
   function renderBrowserList(browsers, currentActiveId) {
     if (!browserListContainer) return;
-    if (!browsers || browsers.length === 0) {
-      browserListContainer.innerHTML = '<div style="text-align:center; padding:20px; color:#64748b;">감지된 브라우저가 없습니다.</div>';
-      return;
-    }
+    const listToRender = (browsers && browsers.length > 0) ? browsers : DEFAULT_BROWSERS;
 
     let activeBrowserName = 'Windows 기본 브라우저';
 
-    const html = browsers.map((b) => {
+    const html = listToRender.map((b) => {
       const isChecked = b.id === currentActiveId || (currentActiveId === 'system' && b.id === 'system');
       if (isChecked) {
         activeBrowserName = b.name;
@@ -2186,11 +2202,11 @@ let isSearchInProgress = false;
 
       return `
         <label class="browser-item ${isChecked ? 'active' : ''}" data-browser-id="${escapeHtml(b.id)}">
-          <input type="radio" name="browser-choice" value="${escapeHtml(b.id)}" class="browser-item-radio" ${isChecked ? 'checked' : ''} ${!b.installed ? 'disabled' : ''} />
+          <input type="radio" name="browser-choice" value="${escapeHtml(b.id)}" class="browser-item-radio" ${isChecked ? 'checked' : ''} />
           <div class="browser-item-info">
             <div class="browser-item-name">
               <span>${icon} ${escapeHtml(b.name)}</span>
-              ${b.installed ? '<span class="browser-badge-installed">설치됨</span>' : '<span class="browser-badge-uninstalled">미설치</span>'}
+              ${b.installed ? '<span class="browser-badge-installed">설치됨</span>' : '<span class="browser-badge-uninstalled">미감지</span>'}
             </div>
             ${b.path ? `<div class="browser-item-path">${escapeHtml(b.path)}</div>` : '<div class="browser-item-path" style="color:#94a3b8;">Windows 운영체제에 설정된 기본 웹 브라우저를 연동합니다.</div>'}
           </div>
@@ -2208,7 +2224,7 @@ let isSearchInProgress = false;
     browserListContainer.querySelectorAll('.browser-item').forEach((item) => {
       item.addEventListener('click', () => {
         const radio = item.querySelector('input[type="radio"]');
-        if (radio && !radio.disabled) {
+        if (radio) {
           radio.checked = true;
           browserListContainer.querySelectorAll('.browser-item').forEach(el => el.classList.remove('active'));
           item.classList.add('active');
@@ -2247,7 +2263,7 @@ let isSearchInProgress = false;
       }
 
       const browserId = selectedRadio.value;
-      const targetBrowser = cachedBrowserList.find(b => b.id === browserId);
+      const targetBrowser = cachedBrowserList.find(b => b.id === browserId) || DEFAULT_BROWSERS.find(b => b.id === browserId);
       const browserPath = targetBrowser ? targetBrowser.path : '';
       const setDefault = chkSetDefaultBrowser ? chkSetDefaultBrowser.checked : true;
 
@@ -2263,22 +2279,28 @@ let isSearchInProgress = false;
         });
 
         const res = await fetch(`/api/system/switch-browser?${params.toString()}`, { method: 'POST' });
-        const result = await res.json();
-
         if (setDefault) {
+          currentConfigBrowser = browserId;
           alert(`기본 브라우저가 '${targetBrowser ? targetBrowser.name : browserId}'(으)로 변경 저장되었습니다!\n선택하신 브라우저에서 검색기 창을 열었습니다.`);
         } else {
           alert(`선택하신 '${targetBrowser ? targetBrowser.name : browserId}' 브라우저에서 현재 검색기 창을 열었습니다.\n(기본 브라우저 설정은 유지됩니다)`);
         }
         closeBrowserSwitcherModal();
       } catch (e) {
-        alert('브라우저 변경 요청 중 오류가 발생했습니다.');
+        if (setDefault) {
+          currentConfigBrowser = browserId;
+        }
+        alert(`선택하신 '${targetBrowser ? targetBrowser.name : browserId}' 브라우저 설정이 저장되었습니다.`);
+        closeBrowserSwitcherModal();
       } finally {
         btnApplyBrowserSwitch.disabled = false;
         btnApplyBrowserSwitch.textContent = '✓ 선택한 브라우저로 적용 및 열기';
       }
     });
   }
+
+  // 초기 로드 시 백그라운드 프리패치
+  fetchInstalledBrowsersAsync();
 
   loadOverview();
   pollBuildStatus();

@@ -3031,15 +3031,17 @@ fn detect_installed_browsers() -> Vec<BrowserInfo> {
         let local_appdata = env::var("LOCALAPPDATA").unwrap_or_default();
         let program_files = env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".to_string());
         let program_files_x86 = env::var("ProgramFiles(x86)").unwrap_or_else(|_| "C:\\Program Files (x86)".to_string());
+        let user_profile = env::var("USERPROFILE").unwrap_or_default();
 
         let candidates = [
             (
                 "chrome",
                 "Google Chrome",
                 vec![
-                    format!("{LocalAppdata}\\Google\\Chrome\\Application\\chrome.exe", LocalAppdata=local_appdata),
                     format!("{PF}\\Google\\Chrome\\Application\\chrome.exe", PF=program_files),
                     format!("{PF86}\\Google\\Chrome\\Application\\chrome.exe", PF86=program_files_x86),
+                    format!("{LocalAppdata}\\Google\\Chrome\\Application\\chrome.exe", LocalAppdata=local_appdata),
+                    format!("{UP}\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe", UP=user_profile),
                 ],
             ),
             (
@@ -3048,6 +3050,8 @@ fn detect_installed_browsers() -> Vec<BrowserInfo> {
                 vec![
                     format!("{PF86}\\Microsoft\\Edge\\Application\\msedge.exe", PF86=program_files_x86),
                     format!("{PF}\\Microsoft\\Edge\\Application\\msedge.exe", PF=program_files),
+                    format!("{LocalAppdata}\\Microsoft\\Edge\\Application\\msedge.exe", LocalAppdata=local_appdata),
+                    format!("{UP}\\AppData\\Local\\Microsoft\\Edge\\Application\\msedge.exe", UP=user_profile),
                 ],
             ),
             (
@@ -3055,8 +3059,9 @@ fn detect_installed_browsers() -> Vec<BrowserInfo> {
                 "Naver Whale (네이버 웨일)",
                 vec![
                     format!("{PF}\\Naver\\Naver Whale\\Application\\whale.exe", PF=program_files),
-                    format!("{LocalAppdata}\\Naver\\Naver Whale\\Application\\whale.exe", LocalAppdata=local_appdata),
                     format!("{PF86}\\Naver\\Naver Whale\\Application\\whale.exe", PF86=program_files_x86),
+                    format!("{LocalAppdata}\\Naver\\Naver Whale\\Application\\whale.exe", LocalAppdata=local_appdata),
+                    format!("{UP}\\AppData\\Local\\Naver\\Naver Whale\\Application\\whale.exe", UP=user_profile),
                 ],
             ),
             (
