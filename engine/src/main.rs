@@ -957,6 +957,7 @@ struct AppState {
     latest_search_seq: AtomicU64,
     cancel_search_seq: AtomicU64,
     db_builder: Arc<Mutex<DbBuildManager>>,
+    port: u16,
 }
 
 fn parse_query_params(url: &str) -> HashMap<String, String> {
@@ -2977,20 +2978,204 @@ fn find_root_dir() -> PathBuf {
     cwd
 }
 
-fn open_browser(url: &str) {
-    #[cfg(target_os = "windows")]
-    {
-        let _ = Command::new("cmd").args(["/C", "start", "", url]).spawn();
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct BrowserInfo {
+    id: String,
+    name: String,
+    path: String,
+    installed: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct SconcConfig {
+    #[serde(default = "default_system_browser")]
+    default_browser: String,
+    #[serde(default)]
+    browser_path: String,
+}
+
+fn default_system_browser() -> String {
+    "system".to_string()
+}
+
+fn get_sconc_config_path(root_dir: &Path) -> PathBuf {
+    root_dir.join("sconc_config.json")
+}
+
+fn load_sconc_config(root_dir: &Path) -> SconcConfig {
+    let p = get_sconc_config_path(root_dir);
+    if let Ok(content) = fs::read_to_string(&p) {
+        if let Ok(cfg) = serde_json::from_str::<SconcConfig>(&content) {
+            return cfg;
+        }
     }
-    #[cfg(target_os = "macos")]
-    {
-        let _ = Command::new("open").arg(url).spawn();
-    }
-    #[cfg(target_os = "linux")]
-    {
-        let _ = Command::new("xdg-open").arg(url).spawn();
+    SconcConfig {
+        default_browser: "system".to_string(),
+        browser_path: "".to_string(),
     }
 }
+
+fn save_sconc_config(root_dir: &Path, cfg: &SconcConfig) {
+    let p = get_sconc_config_path(root_dir);
+    if let Ok(content) = serde_json::to_string_pretty(cfg) {
+        let _ = fs::write(p, content);
+    }
+}
+
+fn detect_installed_browsers() -> Vec<BrowserInfo> {
+    let mut list = Vec::new();
+
+    #[cfg(target_os = "windows")]
+    {
+        let local_appdata = env::var("LOCALAPPDATA").unwrap_or_default();
+        let program_files = env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".to_string());
+        let program_files_x86 = env::var("ProgramFiles(x86)").unwrap_or_else(|_| "C:\\Program Files (x86)".to_string());
+
+        let candidates = [
+            (
+                "chrome",
+                "Google Chrome",
+                vec![
+                    format!("{LocalAppdata}\\Google\\Chrome\\Application\\chrome.exe", LocalAppdata=local_appdata),
+                    format!("{PF}\\Google\\Chrome\\Application\\chrome.exe", PF=program_files),
+                    format!("{PF86}\\Google\\Chrome\\Application\\chrome.exe", PF86=program_files_x86),
+                ],
+            ),
+            (
+                "msedge",
+                "Microsoft Edge",
+                vec![
+                    format!("{PF86}\\Microsoft\\Edge\\Application\\msedge.exe", PF86=program_files_x86),
+                    format!("{PF}\\Microsoft\\Edge\\Application\\msedge.exe", PF=program_files),
+                ],
+            ),
+            (
+                "whale",
+                "Naver Whale (네이버 웨일)",
+                vec![
+                    format!("{PF}\\Naver\\Naver Whale\\Application\\whale.exe", PF=program_files),
+                    format!("{LocalAppdata}\\Naver\\Naver Whale\\Application\\whale.exe", LocalAppdata=local_appdata),
+                    format!("{PF86}\\Naver\\Naver Whale\\Application\\whale.exe", PF86=program_files_x86),
+                ],
+            ),
+            (
+                "firefox",
+                "Mozilla Firefox",
+                vec![
+                    format!("{PF}\\Mozilla Firefox\\firefox.exe", PF=program_files),
+                    format!("{PF86}\\Mozilla Firefox\\firefox.exe", PF86=program_files_x86),
+                ],
+            ),
+            (
+                "brave",
+                "Brave Browser",
+                vec![
+                    format!("{PF}\\BraveSoftware\\Brave-Browser\\Application\\brave.exe", PF=program_files),
+                    format!("{LocalAppdata}\\BraveSoftware\\Brave-Browser\\Application\\brave.exe", LocalAppdata=local_appdata),
+                ],
+            ),
+        ];
+
+        for (id, name, path_candidates) in candidates {
+            let mut found_path = "".to_string();
+            let mut is_installed = false;
+            for p in path_candidates {
+                if Path::new(&p).exists() {
+                    found_path = p;
+                    is_installed = true;
+                    break;
+                }
+            }
+            list.push(BrowserInfo {
+                id: id.to_string(),
+                name: name.to_string(),
+                path: found_path,
+                installed: is_installed,
+            });
+        }
+    }
+
+    // Windows 시스템 기본 브라우저 옵션 (항상 사용 가능)
+    list.push(BrowserInfo {
+        id: "system".to_string(),
+        name: "Windows 시스템 기본 브라우저".to_string(),
+        path: "".to_string(),
+        installed: true,
+    });
+
+    list
+}
+
+fn launch_specific_browser(browser_path: &str, url: &str) {
+    if !browser_path.is_empty() && Path::new(browser_path).exists() {
+        let _ = Command::new(browser_path).arg(url).spawn();
+    } else {
+        #[cfg(target_os = "windows")]
+        {
+            let _ = Command::new("cmd").args(["/C", "start", "", url]).spawn();
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let _ = Command::new("open").arg(url).spawn();
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let _ = Command::new("xdg-open").arg(url).spawn();
+        }
+    }
+}
+
+fn open_browser_with_root(url: &str, root_dir: &Path) {
+    let cfg = load_sconc_config(root_dir);
+    launch_specific_browser(&cfg.browser_path, url);
+}
+
+fn handle_installed_browsers(state: &AppState) -> Response<std::io::Cursor<Vec<u8>>> {
+    let browsers = detect_installed_browsers();
+    let cfg = load_sconc_config(&state.root_dir);
+
+    let json = serde_json::json!({
+        "status": "ok",
+        "current_browser": cfg.default_browser,
+        "current_path": cfg.browser_path,
+        "browsers": browsers
+    });
+    Response::from_string(json.to_string())
+        .with_header(Header::from_bytes(&b"Content-Type"[..], &b"application/json; charset=utf-8"[..]).unwrap())
+}
+
+fn handle_switch_browser(state: &AppState, params: &HashMap<String, String>) -> Response<std::io::Cursor<Vec<u8>>> {
+    let browser_id = params.get("browser_id").map(|s| s.as_str()).unwrap_or("system");
+    let browser_path = params.get("browser_path").map(|s| s.as_str()).unwrap_or("");
+    let set_default = params.get("set_default").map(|s| s == "1" || s == "true").unwrap_or(true);
+    let open_now = params.get("open_now").map(|s| s == "1" || s == "true").unwrap_or(true);
+    let port = state.port;
+    let url = format!("http://localhost:{}", port);
+
+    if set_default {
+        let cfg = SconcConfig {
+            default_browser: browser_id.to_string(),
+            browser_path: browser_path.to_string(),
+        };
+        save_sconc_config(&state.root_dir, &cfg);
+    }
+
+    if open_now {
+        launch_specific_browser(browser_path, &url);
+    }
+
+    let json = serde_json::json!({
+        "status": "ok",
+        "message": format!("브라우저 설정이 적용되었습니다. (id={}, set_default={})", browser_id, set_default),
+        "browser_id": browser_id,
+        "browser_path": browser_path,
+        "set_default": set_default
+    });
+    Response::from_string(json.to_string())
+        .with_header(Header::from_bytes(&b"Content-Type"[..], &b"application/json; charset=utf-8"[..]).unwrap())
+}
+
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -3070,6 +3255,7 @@ fn main() {
         latest_search_seq: AtomicU64::new(0),
         cancel_search_seq: AtomicU64::new(0),
         db_builder: Arc::new(Mutex::new(DbBuildManager::new())),
+        port,
     });
 
     if args.iter().any(|a| a == "--self-test") {
@@ -3123,14 +3309,14 @@ fn main() {
             println!("  [안내] 포트 {}에서 이미 검색기 서버가 실행 중입니다.", port);
             if auto_open {
                 println!("  [안내] 브라우저로 검색기 화면을 엽니다: {}", url);
-                open_browser(&url);
+                open_browser_with_root(&url, &root_dir);
             }
             return;
         }
     };
 
     if auto_open {
-        open_browser(&url);
+        open_browser_with_root(&url, &root_dir);
     }
 
     for mut req in server.incoming_requests() {
@@ -3147,6 +3333,8 @@ fn main() {
                 (&Method::Get, "/api/segment") => handle_segment_detail(&state, &params),
                 (&Method::Get, "/api/source-jump") => handle_source_jump(&state, &params),
                 (&Method::Get, "/api/open-editor") | (&Method::Post, "/api/open-editor") => handle_open_editor(&params),
+                (&Method::Get, "/api/system/installed-browsers") => handle_installed_browsers(&state),
+                (&Method::Get, "/api/system/switch-browser") | (&Method::Post, "/api/system/switch-browser") => handle_switch_browser(&state, &params),
                 (&Method::Post, "/api/segment/edit") => handle_segment_edit(&state, &mut req),
                 (&Method::Post, "/api/build-db") => handle_build_db(&state, &mut req),
                 (&Method::Get, "/api/build-db/status") => handle_build_db_status(&state),

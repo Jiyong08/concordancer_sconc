@@ -2128,6 +2128,158 @@ let isSearchInProgress = false;
     });
   }
 
+  // =========================================================================
+  // Browser Switcher Modal Logic (설치된 브라우저 감지 및 연동 브라우저 변경)
+  // =========================================================================
+  const btnOpenBrowserModal = document.getElementById('btn-open-browser-modal');
+  const modalBrowserSwitcher = document.getElementById('modal-browser-switcher');
+  const btnCloseBrowserModal = document.getElementById('btn-close-browser-modal');
+  const btnCancelBrowserModal = document.getElementById('btn-cancel-browser-modal');
+  const btnApplyBrowserSwitch = document.getElementById('btn-apply-browser-switch');
+  const browserListContainer = document.getElementById('browser-list-container');
+  const chkSetDefaultBrowser = document.getElementById('chk-set-default-browser');
+  const browserCurrentStatusText = document.getElementById('browser-current-status-text');
+
+  let cachedBrowserList = [];
+  let currentConfigBrowser = 'system';
+
+  async function openBrowserSwitcherModal() {
+    if (!modalBrowserSwitcher) return;
+    modalBrowserSwitcher.style.display = 'flex';
+    if (browserListContainer) {
+      browserListContainer.innerHTML = '<div style="text-align:center; padding:20px; color:#64748b;">설치된 브라우저를 감지하는 중…</div>';
+    }
+
+    try {
+      const res = await fetch('/api/system/installed-browsers');
+      const data = await res.json();
+      cachedBrowserList = data.browsers || [];
+      currentConfigBrowser = data.current_browser || 'system';
+
+      renderBrowserList(cachedBrowserList, currentConfigBrowser);
+    } catch (e) {
+      if (browserListContainer) {
+        browserListContainer.innerHTML = '<div style="text-align:center; padding:20px; color:#dc2626;">브라우저 목록을 불러오지 못했습니다.</div>';
+      }
+    }
+  }
+
+  function closeBrowserSwitcherModal() {
+    if (modalBrowserSwitcher) modalBrowserSwitcher.style.display = 'none';
+  }
+
+  function renderBrowserList(browsers, currentActiveId) {
+    if (!browserListContainer) return;
+    if (!browsers || browsers.length === 0) {
+      browserListContainer.innerHTML = '<div style="text-align:center; padding:20px; color:#64748b;">감지된 브라우저가 없습니다.</div>';
+      return;
+    }
+
+    let activeBrowserName = 'Windows 기본 브라우저';
+
+    const html = browsers.map((b) => {
+      const isChecked = b.id === currentActiveId || (currentActiveId === 'system' && b.id === 'system');
+      if (isChecked) {
+        activeBrowserName = b.name;
+      }
+      const icon = b.id === 'chrome' ? '🌐' : b.id === 'msedge' ? '🌊' : b.id === 'whale' ? '🐋' : b.id === 'firefox' ? '🦊' : b.id === 'brave' ? '🦁' : '🖥️';
+
+      return `
+        <label class="browser-item ${isChecked ? 'active' : ''}" data-browser-id="${escapeHtml(b.id)}">
+          <input type="radio" name="browser-choice" value="${escapeHtml(b.id)}" class="browser-item-radio" ${isChecked ? 'checked' : ''} ${!b.installed ? 'disabled' : ''} />
+          <div class="browser-item-info">
+            <div class="browser-item-name">
+              <span>${icon} ${escapeHtml(b.name)}</span>
+              ${b.installed ? '<span class="browser-badge-installed">설치됨</span>' : '<span class="browser-badge-uninstalled">미설치</span>'}
+            </div>
+            ${b.path ? `<div class="browser-item-path">${escapeHtml(b.path)}</div>` : '<div class="browser-item-path" style="color:#94a3b8;">Windows 운영체제에 설정된 기본 웹 브라우저를 연동합니다.</div>'}
+          </div>
+        </label>
+      `;
+    }).join('');
+
+    browserListContainer.innerHTML = html;
+
+    if (browserCurrentStatusText) {
+      browserCurrentStatusText.textContent = `현재 연동: ${activeBrowserName}`;
+    }
+
+    // Attach click highlight
+    browserListContainer.querySelectorAll('.browser-item').forEach((item) => {
+      item.addEventListener('click', () => {
+        const radio = item.querySelector('input[type="radio"]');
+        if (radio && !radio.disabled) {
+          radio.checked = true;
+          browserListContainer.querySelectorAll('.browser-item').forEach(el => el.classList.remove('active'));
+          item.classList.add('active');
+        }
+      });
+    });
+  }
+
+  if (btnOpenBrowserModal) {
+    btnOpenBrowserModal.addEventListener('click', (e) => {
+      e.preventDefault();
+      openBrowserSwitcherModal();
+    });
+  }
+
+  if (btnCloseBrowserModal) {
+    btnCloseBrowserModal.addEventListener('click', closeBrowserSwitcherModal);
+  }
+
+  if (btnCancelBrowserModal) {
+    btnCancelBrowserModal.addEventListener('click', closeBrowserSwitcherModal);
+  }
+
+  if (modalBrowserSwitcher) {
+    modalBrowserSwitcher.addEventListener('click', (e) => {
+      if (e.target === modalBrowserSwitcher) closeBrowserSwitcherModal();
+    });
+  }
+
+  if (btnApplyBrowserSwitch) {
+    btnApplyBrowserSwitch.addEventListener('click', async () => {
+      const selectedRadio = browserListContainer ? browserListContainer.querySelector('input[name="browser-choice"]:checked') : null;
+      if (!selectedRadio) {
+        alert('연동할 브라우저를 선택해 주세요.');
+        return;
+      }
+
+      const browserId = selectedRadio.value;
+      const targetBrowser = cachedBrowserList.find(b => b.id === browserId);
+      const browserPath = targetBrowser ? targetBrowser.path : '';
+      const setDefault = chkSetDefaultBrowser ? chkSetDefaultBrowser.checked : true;
+
+      try {
+        btnApplyBrowserSwitch.disabled = true;
+        btnApplyBrowserSwitch.textContent = '적용 중…';
+
+        const params = new URLSearchParams({
+          browser_id: browserId,
+          browser_path: browserPath,
+          set_default: setDefault ? '1' : '0',
+          open_now: '1',
+        });
+
+        const res = await fetch(`/api/system/switch-browser?${params.toString()}`, { method: 'POST' });
+        const result = await res.json();
+
+        if (setDefault) {
+          alert(`기본 브라우저가 '${targetBrowser ? targetBrowser.name : browserId}'(으)로 변경 저장되었습니다!\n선택하신 브라우저에서 검색기 창을 열었습니다.`);
+        } else {
+          alert(`선택하신 '${targetBrowser ? targetBrowser.name : browserId}' 브라우저에서 현재 검색기 창을 열었습니다.\n(기본 브라우저 설정은 유지됩니다)`);
+        }
+        closeBrowserSwitcherModal();
+      } catch (e) {
+        alert('브라우저 변경 요청 중 오류가 발생했습니다.');
+      } finally {
+        btnApplyBrowserSwitch.disabled = false;
+        btnApplyBrowserSwitch.textContent = '✓ 선택한 브라우저로 적용 및 열기';
+      }
+    });
+  }
+
   loadOverview();
   pollBuildStatus();
 })();
