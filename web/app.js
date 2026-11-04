@@ -1497,12 +1497,11 @@ let isSearchInProgress = false;
       methodStr = '정규식';
     }
 
-    const summaryText = `${targetStr} · ${methodStr}`;
     if (searchMethodSummaryLabel) {
-      searchMethodSummaryLabel.textContent = `🎯 ${summaryText}`;
+      searchMethodSummaryLabel.textContent = methodStr;
     }
     if (methodModalSummaryText) {
-      methodModalSummaryText.textContent = summaryText;
+      methodModalSummaryText.textContent = `${targetStr} · ${methodStr}`;
     }
   }
 
@@ -1575,7 +1574,7 @@ let isSearchInProgress = false;
     const targets = getSelectedSearchTargets().join(',');
     const methods = getSelectedSearchMethods().join(',');
     const mode = selectMode ? selectMode.value : 'all';
-    const layer = selectLayer.value;
+    const layer = selectLayer ? selectLayer.value : 'ALL';
     const isAllDocs = selectedDocIds.has('ALL') || selectedDocIds.size === globalDocuments.length || selectedDocIds.size === 0;
     const docIdsParam = isAllDocs ? 'ALL' : Array.from(selectedDocIds).join(',');
     const docId = isAllDocs ? 'ALL' : (selectedDocIds.size === 1 ? Array.from(selectedDocIds)[0] : 'MULTI');

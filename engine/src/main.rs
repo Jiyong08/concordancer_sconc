@@ -1555,7 +1555,8 @@ fn handle_search(
 
     let bracket_tokens = state.normalizer.parse_bracket_query(core_query);
 
-    if core_query.is_empty() && selected_doc_ids.is_empty() && layer_filter == "ALL" && cat_filter == "ALL" {
+    let is_all_targets = use_surface && use_morph && use_sense && use_syntax;
+    if core_query.is_empty() && selected_doc_ids.is_empty() && layer_filter == "ALL" && cat_filter == "ALL" && is_all_targets {
         return json_response(
             &SearchResponse {
                 query: raw_query.to_string(),
@@ -1621,15 +1622,33 @@ fn handle_search(
         sql.push_str(" AND d.corpus_category LIKE ?");
         sql_params.push(format!("%{}%", cat_filter));
     }
+    // [요청 반영] 사용자가 선택한 검색 대상 층위에 따른 자동 말뭉치 필터 적용
+    if !use_surface {
+        let mut target_filters = Vec::new();
+        if use_morph {
+            target_filters.push("COALESCE(s.morph_flat, '') != ''");
+        }
+        if use_sense {
+            target_filters.push("COALESCE(s.sense_flat, '') != ''");
+        }
+        if use_syntax {
+            target_filters.push("COALESCE(s.syntax_tree, '') != ''");
+        }
+        if !target_filters.is_empty() {
+            sql.push_str(&format!(" AND ({})", target_filters.join(" OR ")));
+        }
+    }
+
+    // 명시적 레거시 layer_filter 호환
     if layer_filter == "TRIPLE" {
         sql.push_str(" AND COALESCE(s.morph_flat, '') != '' AND COALESCE(s.sense_flat, '') != '' AND COALESCE(s.syntax_tree, '') != ''");
     } else if layer_filter == "OLD_HANGUL" {
         sql.push_str(" AND d.corpus_category LIKE '%옛한글%'");
-    } else if layer_filter == "MORPH" {
+    } else if layer_filter == "MORPH" && use_surface {
         sql.push_str(" AND COALESCE(s.morph_flat, '') != ''");
-    } else if layer_filter == "SENSE" {
+    } else if layer_filter == "SENSE" && use_surface {
         sql.push_str(" AND COALESCE(s.sense_flat, '') != ''");
-    } else if layer_filter == "SYNTAX" {
+    } else if layer_filter == "SYNTAX" && use_surface {
         sql.push_str(" AND COALESCE(s.syntax_tree, '') != ''");
     }
 
@@ -1644,12 +1663,6 @@ fn handle_search(
             sql_params.push(pat_nfd);
             sql_params.push(pat_raw.clone());
             sql_params.push(pat_raw);
-        } else if !use_surface && use_morph && !use_sense && !use_syntax {
-            sql.push_str(" AND COALESCE(s.morph_flat, '') != ''");
-        } else if !use_surface && !use_morph && use_sense && !use_syntax {
-            sql.push_str(" AND COALESCE(s.sense_flat, '') != ''");
-        } else if !use_surface && !use_morph && !use_sense && use_syntax {
-            sql.push_str(" AND COALESCE(s.syntax_tree, '') != ''");
         }
     }
 

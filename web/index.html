@@ -68,29 +68,19 @@
 
           <!-- 윗줄 (Row 1): 가로 한 줄 검색 옵션 바 -->
           <div class="search-options-bar" id="search-options-bar">
+            <!-- 1. 문서선택 (가장 왼쪽) -->
             <div class="opt-pill">
-              <label for="btn-search-method-trigger">검색방식</label>
-              <button type="button" class="btn-doc-selector-trigger" id="btn-search-method-trigger" title="검색 대상 층위(원문/형태소/의미/구문)와 연산 방식(텍스트/자소/정규식)을 별도의 창에서 복합적으로 선택합니다.">
-                <span id="search-method-summary-label">🎯 원문 표층 · 텍스트</span> ▾
+              <label for="btn-open-doc-selector">문서선택</label>
+              <button type="button" class="btn-doc-selector-trigger" id="btn-open-doc-selector" title="원본 말뭉치가 저장된 폴더 및 하위 파일 구조를 트리 형태로 확인하고, 검색할 파일들을 체크박스로 다중 선택합니다.">
+                <span id="doc-selector-label">📂 전체 문서</span> ▾
               </button>
             </div>
 
+            <!-- 2. 검색방식 -->
             <div class="opt-pill">
-              <label for="select-layer">연동필터</label>
-              <select id="select-layer">
-                <option value="ALL">전체 말뭉치</option>
-                <option value="TRIPLE">★ 형태+의미+구문 3중연동</option>
-                <option value="OLD_HANGUL">📜 옛한글 문헌 (3종)</option>
-                <option value="MORPH">형태분석 포함</option>
-                <option value="SENSE">의미분석 포함</option>
-                <option value="SYNTAX">구문분석 포함</option>
-              </select>
-            </div>
-
-            <div class="opt-pill">
-              <label for="btn-open-doc-selector">문서지정</label>
-              <button type="button" class="btn-doc-selector-trigger" id="btn-open-doc-selector" title="원본 말뭉치가 저장된 폴더 및 하위 파일 구조를 트리 형태로 확인하고, 검색할 파일들을 체크박스로 다중 선택합니다.">
-                <span id="doc-selector-label">📂 전체 문서</span> ▾
+              <label for="btn-search-method-trigger">검색방식</label>
+              <button type="button" class="btn-doc-selector-trigger" id="btn-search-method-trigger" title="검색 대상 층위(원문/형태소/의미/구문)와 연산 방식(텍스트/자소/정규식)을 별도의 창에서 선택합니다.">
+                <span id="search-method-summary-label">기본</span> ▾
               </button>
             </div>
 
