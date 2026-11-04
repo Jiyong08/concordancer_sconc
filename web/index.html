@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>sconc v0.1 — 한국어 통시·공시 다층 말뭉치 통합 검색기</title>
-  <link rel="stylesheet" href="/styles.css?v=6" />
+  <link rel="stylesheet" href="/styles.css?v=7" />
 </head>
 <body>
   <div class="app-shell ratio-full" id="app-shell">
@@ -405,7 +405,7 @@
           <div class="scrollable-card-body">
             <div class="guide-grid">
               <!-- 1. 다층 주석(형태·의미·구문) 및 정규식 검색 안내 -->
-              <div class="guide-box">
+              <div class="guide-box" style="width: 480px;">
                 <h3>1. 형태소 · 형태의미(어깨번호) · 구문 표지 · 정규식 검색법</h3>
                 <table class="guide-table">
                   <thead>
@@ -441,7 +441,7 @@
               </div>
 
               <!-- 2. 대괄호 자소 검색 문법 (0, 1, 01 슬롯 표기법 및 정규식 결합) -->
-              <div class="guide-box">
+              <div class="guide-box" style="width: 520px;">
                 <h3>2. 대괄호 자소 검색 문법 (`0`, `1`, `01` 슬롯 표기법 및 정규식 결합)</h3>
                 <p style="font-size:0.82rem; margin:0 0 8px 0; color:#334155;">
                   한글 음절을 대괄호 <code>[초성/중성/종성]</code> 안에 슬래시(<code>/</code>)로 구분하여 검색합니다.<br/>
@@ -486,88 +486,70 @@
               </div>
 
               <!-- 3. 국립국어원 21세기 세종계획 형태분석 품사 태그세트 -->
-              <div class="guide-box" style="grid-column: 1 / -1;">
-                <h3>3. 국립국어원 21세기 세종계획 형태분석 품사 태그세트 표</h3>
-                <p style="font-size:0.82rem; margin:0 0 10px 0; color:#334155;">
-                  형태소/품사 검색(예: <code>/NNG</code>, <code>하/XSV</code>) 및 형태의미 검색 시 사용되는 표준 세종 품사 태그(42개 범주) 분류 체계입니다.
-                </p>
-                <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap:12px;">
-                  <div>
-                    <table class="guide-table">
-                      <thead>
-                        <tr>
-                          <th style="width:75px;">대분류</th>
-                          <th style="width:65px;">태그</th>
-                          <th style="width:90px;">품사 명칭</th>
-                          <th>설명 및 주요 예시</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr><td rowspan="5"><strong>체언</strong><br/>(Nominals)</td><td><code>NNG</code></td><td>일반 명사</td><td>사람, 자동차, 사랑, 컴퓨터</td></tr>
-                        <tr><td><code>NNP</code></td><td>고유 명사</td><td>서울, 세종대왕, 한라산</td></tr>
-                        <tr><td><code>NNB</code></td><td>의존 명사</td><td>것, 수, 줄, 뿐, 개, 명</td></tr>
-                        <tr><td><code>NP</code></td><td>대명사</td><td>나, 너, 우리, 이것, 저기</td></tr>
-                        <tr><td><code>NR</code></td><td>수사</td><td>하나, 둘, 첫째, 백</td></tr>
-                        <tr><td rowspan="5"><strong>용언</strong><br/>(Predicates)</td><td><code>VV</code></td><td>동사</td><td>먹다, 가다, 하다, 달리다</td></tr>
-                        <tr><td><code>VA</code></td><td>형용사</td><td>예쁘다, 크다, 좋다, 아름답다</td></tr>
-                        <tr><td><code>VX</code></td><td>보조 용언</td><td>-아 있다, -고 싶다, -어 보다</td></tr>
-                        <tr><td><code>VCP</code></td><td>긍정 지정사</td><td>서술격 조사(이다)</td></tr>
-                        <tr><td><code>VCN</code></td><td>부정 지정사</td><td>형용사(아니다)</td></tr>
-                        <tr><td rowspan="3"><strong>수식언</strong><br/>(Modifiers)</td><td><code>MM</code></td><td>관형사</td><td>새, 헌, 온갖, 모든</td></tr>
-                        <tr><td><code>MAG</code></td><td>일반 부사</td><td>매우, 빨리, 더, 가장</td></tr>
-                        <tr><td><code>MAJ</code></td><td>접속 부사</td><td>그러나, 그리고, 및</td></tr>
-                        <tr><td><strong>독립언</strong></td><td><code>IC</code></td><td>감탄사</td><td>아, 어머, 네, 그래</td></tr>
-                        <tr><td rowspan="9"><strong>관계언</strong><br/>(Particles)</td><td><code>JKS</code></td><td>주격 조사</td><td>이, 가, 께서</td></tr>
-                        <tr><td><code>JKC</code></td><td>보격 조사</td><td>'되다/아니다' 앞의 이, 가</td></tr>
-                        <tr><td><code>JKG</code></td><td>관형격 조사</td><td>의</td></tr>
-                        <tr><td><code>JKO</code></td><td>목적격 조사</td><td>을, 를</td></tr>
-                        <tr><td><code>JKB</code></td><td>부사격 조사</td><td>에, 에서, 에게, 로, 와</td></tr>
-                        <tr><td><code>JKV</code></td><td>호격 조사</td><td>아, 야, 여</td></tr>
-                        <tr><td><code>JKQ</code></td><td>인용격 조사</td><td>라고, 고</td></tr>
-                        <tr><td><code>JX</code></td><td>보조사</td><td>은, 는, 도, 만, 까지, 부터</td></tr>
-                        <tr><td><code>JC</code></td><td>접속 조사</td><td>와, 과, 랑, 이며</td></tr>
-                      </tbody>
-                    </table>
-                  </div>
-                  <div>
-                    <table class="guide-table">
-                      <thead>
-                        <tr>
-                          <th style="width:75px;">대분류</th>
-                          <th style="width:65px;">태그</th>
-                          <th style="width:90px;">품사 명칭</th>
-                          <th>설명 및 주요 예시</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr><td rowspan="5"><strong>어미</strong><br/>(Endings)</td><td><code>EP</code></td><td>선어말 어미</td><td>-시-, -었-, -겠-, -더-</td></tr>
-                        <tr><td><code>EF</code></td><td>종결 어미</td><td>-다, -니, -라, -냐, -오</td></tr>
-                        <tr><td><code>EC</code></td><td>연결 어미</td><td>-고, -며, -면, -어서, -지</td></tr>
-                        <tr><td><code>ETN</code></td><td>명사형 전성 어미</td><td>-ㅁ, -기</td></tr>
-                        <tr><td><code>ETM</code></td><td>관형형 전성 어미</td><td>-ㄴ, -는, -ㄹ, -던</td></tr>
-                        <tr><td rowspan="5"><strong>접사 및<br/>어근</strong></td><td><code>XPN</code></td><td>체언 접두사</td><td>풋-, 맨-, 헛-, 참-</td></tr>
-                        <tr><td><code>XSN</code></td><td>명사 파생 접미사</td><td>-들, -님, -적, -화, -성</td></tr>
-                        <tr><td><code>XSV</code></td><td>동사 파생 접미사</td><td>-하다, -되다, -시키다</td></tr>
-                        <tr><td><code>XSA</code></td><td>형용사 파생 접미사</td><td>-하다, -스럽다, -답다</td></tr>
-                        <tr><td><code>XR</code></td><td>어근</td><td>깨끗, 영롱, 조용</td></tr>
-                        <tr><td rowspan="10"><strong>기호 및<br/>특수</strong></td><td><code>SF</code></td><td>마침 부호</td><td>마침표(.), 물음표(?), 느낌표(!)</td></tr>
-                        <tr><td><code>SP</code></td><td>쉼표·빗금 등</td><td>쉼표(,), 가운뎃점(·), 빗금(/)</td></tr>
-                        <tr><td><code>SS</code></td><td>따옴표·괄호</td><td>따옴표(' "), 괄호(( ) [ ]), 줄표(-)</td></tr>
-                        <tr><td><code>SE</code></td><td>줄임표</td><td>말줄임표(……)</td></tr>
-                        <tr><td><code>SO</code></td><td>붙임표(하이픈)</td><td>물결표(~), 숨김표, 빠짐표</td></tr>
-                        <tr><td><code>SW</code></td><td>기타 기호</td><td>화폐·수학·단위 기호($, %, ㎡)</td></tr>
-                        <tr><td><code>SL</code></td><td>외국어</td><td>알파벳, 가나 등 외국 문자</td></tr>
-                        <tr><td><code>SH</code></td><td>한자</td><td>한자 및 한자 기호</td></tr>
-                        <tr><td><code>SN</code></td><td>숫자</td><td>아라비아 숫자(0~9)</td></tr>
-                        <tr><td><code>NA</code></td><td>분석 불능</td><td>미인식·분석불능 토큰</td></tr>
-                      </tbody>
-                    </table>
-                  </div>
+              <div class="guide-box" style="width: 440px;">
+                <h3>3. 국립국어원 21세기 세종계획 형태분석 품사 태그세트</h3>
+                <div style="max-height: 560px; overflow-y: auto; border: 1px solid #cbd5e1; border-radius: 6px;">
+                  <table class="guide-table">
+  <thead>
+    <tr>
+      <th style="width:100px;">대분류</th>
+      <th style="width:140px;">소분류</th>
+      <th>세분류</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td rowspan="5"><strong>(1) 체언</strong></td><td rowspan="3">명사 <strong>NN</strong></td><td>일반명사 <strong>NNG</strong></td></tr>
+    <tr><td>고유명사 <strong>NNP</strong></td></tr>
+    <tr><td>의존명사 <strong>NNB</strong></td></tr>
+    <tr><td>대명사 <strong>NP</strong></td><td>대명사 <strong>NP</strong></td></tr>
+    <tr><td>수사 <strong>NR</strong></td><td>수사 <strong>NR</strong></td></tr>
+    <tr><td rowspan="5"><strong>(2) 용언</strong></td><td>동사 <strong>VV</strong></td><td>동사 <strong>VV</strong></td></tr>
+    <tr><td>형용사 <strong>VA</strong></td><td>형용사 <strong>VA</strong></td></tr>
+    <tr><td>보조용언 <strong>VX</strong></td><td>보조용언 <strong>VX</strong></td></tr>
+    <tr><td rowspan="2">지정사 <strong>VC</strong></td><td>긍정지정사 <strong>VCP</strong></td></tr>
+    <tr><td>부정지정사 <strong>VCN</strong></td></tr>
+    <tr><td rowspan="3"><strong>(3) 수식언</strong></td><td>관형사 <strong>MM</strong></td><td></td></tr>
+    <tr><td rowspan="2">부사 <strong>MA</strong></td><td>일반부사 <strong>MAG</strong></td></tr>
+    <tr><td>접속부사 <strong>MAJ</strong></td></tr>
+    <tr><td rowspan="1"><strong>(4) 독립언</strong></td><td>감탄사 <strong>IC</strong></td><td>감탄사 <strong>IC</strong></td></tr>
+    <tr><td rowspan="9"><strong>(5) 관계언</strong></td><td rowspan="7">격조사 <strong>JK</strong></td><td>주격조사 <strong>JKS</strong></td></tr>
+    <tr><td>보격조사 <strong>JKC</strong></td></tr>
+    <tr><td>관형격조사 <strong>JKG</strong></td></tr>
+    <tr><td>목적격조사 <strong>JKO</strong></td></tr>
+    <tr><td>부사격조사 <strong>JKB</strong></td></tr>
+    <tr><td>호격조사 <strong>JKV</strong></td></tr>
+    <tr><td>인용격조사 <strong>JKQ</strong></td></tr>
+    <tr><td>보조사 <strong>JX</strong></td><td>보조사 <strong>JX</strong></td></tr>
+    <tr><td>접속조사 <strong>JC</strong></td><td>접속조사 <strong>JC</strong></td></tr>
+    <tr><td rowspan="10"><strong>(6) 의존형태</strong></td><td rowspan="5">어미 <strong>E</strong></td><td>선어말어미 <strong>EP</strong></td></tr>
+    <tr><td>종결어미 <strong>EF</strong></td></tr>
+    <tr><td>연결어미 <strong>EC</strong></td></tr>
+    <tr><td>명사형전성어미 <strong>ETN</strong></td></tr>
+    <tr><td>관형형전성어미 <strong>ETM</strong></td></tr>
+    <tr><td>접두사 <strong>XP</strong></td><td>체언접두사 <strong>XPN</strong></td></tr>
+    <tr><td rowspan="3">접미사 <strong>XS</strong></td><td>명사파생접미사 <strong>XSN</strong></td></tr>
+    <tr><td>동사파생접미사 <strong>XSV</strong></td></tr>
+    <tr><td>형용사파생접미사 <strong>XSA</strong></td></tr>
+    <tr><td>어근 <strong>XR</strong></td><td>어근 <strong>XR</strong></td></tr>
+    <tr><td rowspan="12"><strong>(7) 기호</strong></td><td>마침표, 물음표, 느낌표</td><td><strong>SF</strong></td></tr>
+    <tr><td>쉼표, 가운뎃점, 콜론, 빗금</td><td><strong>SP</strong></td></tr>
+    <tr><td>따옴표, 괄호표, 줄표</td><td><strong>SS</strong></td></tr>
+    <tr><td>줄임표</td><td><strong>SE</strong></td></tr>
+    <tr><td>붙임표(물결, 숨김, 빠짐)</td><td><strong>SO</strong></td></tr>
+    <tr><td>외국어</td><td><strong>SL</strong></td></tr>
+    <tr><td>한자</td><td><strong>SH</strong></td></tr>
+    <tr><td>기타기호(논리수학기호, 화폐기호등)</td><td><strong>SW</strong></td></tr>
+    <tr><td>명사추정범주</td><td><strong>NF</strong></td></tr>
+    <tr><td>용언추정범주</td><td><strong>NV</strong></td></tr>
+    <tr><td>숫자</td><td><strong>SN</strong></td></tr>
+    <tr><td>분석불능범주</td><td><strong>NA</strong></td></tr>
+  </tbody>
+</table>
                 </div>
               </div>
 
               <!-- 4. 한글과컴퓨터 두벌식 옛글 입력법 -->
-              <div class="guide-box">
+              <div class="guide-box" style="width: 520px;">
                 <h3>4. 한글과컴퓨터(한컴오피스) 두벌식 옛글 입력법 안내</h3>
                 <p style="font-size:0.82rem; margin:0 0 8px 0; color:#334155;">
                   검색창 우측의 <strong>[⌨️ 옛한글 입력: ON]</strong> 버튼을 켜면 OS 한/영 상태와 무관하게 한컴 두벌식 옛글 타건 규칙으로 즉시 조합됩니다.
@@ -611,7 +593,7 @@
               </div>
 
               <!-- 5. 원클릭 예시 검색 실행 -->
-              <div class="guide-box">
+              <div class="guide-box" style="width: 440px;">
                 <h3>5. ⚡ 원클릭 예시 검색 (클릭 시 검색 화면으로 이동하여 즉시 실행)</h3>
                 <p style="font-size:0.82rem; margin:0 0 10px 0; color:#334155;">
                   아래 예시 버튼을 클릭하면 검색창에 해당 식이 자동으로 입력되며 즉시 결과를 확인하실 수 있습니다.
@@ -890,7 +872,7 @@
       </div>
     </div>
   </div>
-  <script src="/hangul_automata.js?v=6"></script>
-  <script src="/app.js?v=6"></script>
+  <script src="/hangul_automata.js?v=7"></script>
+  <script src="/app.js?v=7"></script>
 </body>
 </html>

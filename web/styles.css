@@ -763,10 +763,14 @@ html, body {
 
 /* Usage Guide Grid */
 .guide-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
-  gap: 14px;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  gap: 16px;
   padding: 16px;
+  overflow-x: auto;
+  align-items: stretch;
+  min-width: max-content;
 }
 
 .guide-box {
@@ -774,6 +778,17 @@ html, body {
   border: 1px solid #cbd5e1;
   border-radius: 8px;
   padding: 14px 16px;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+}
+
+.guide-table thead th {
+  position: sticky;
+  top: 0;
+  background: #f1f5f9;
+  z-index: 2;
 }
 
 .guide-box h3 {
