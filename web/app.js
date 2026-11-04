@@ -5,6 +5,9 @@
   let editModeActive = false;
   let inspectorExpanded = false; // 기본값: 접힘 (Folded)
   let currentSearchAbort = null;
+let currentSearchSeq = 0;
+let searchExplicitlyCancelled = false;
+let isSearchInProgress = false;
 
   const appShell = document.getElementById('app-shell');
   const selectAspectRatio = document.getElementById('select-aspect-ratio');
@@ -231,6 +234,7 @@
   // Intercept keystrokes when Hancom Old Hangul IME is ON
   searchInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
+      if (e.isComposing || e.keyCode === 229) return;
       e.preventDefault();
       runSearch();
       return;
@@ -324,18 +328,32 @@
     });
   });
 
-  btnSearch.addEventListener('click', () => runSearch());
+  let lastSearchClickTime = 0;
+  btnSearch.addEventListener('click', () => {
+    const now = Date.now();
+    if (now - lastSearchClickTime < 350) return; // 더블클릭 등 350ms 이내 중복 클릭 차단
+    lastSearchClickTime = now;
+    runSearch();
+  });
 
   // 6. Search Cancel Button (검색 종료)
   btnCancelSearch.addEventListener('click', async () => {
+    searchExplicitlyCancelled = true;
     if (currentSearchAbort) {
-      currentSearchAbort.abort();
+      try {
+        currentSearchAbort.abort();
+      } catch (_) {}
       currentSearchAbort = null;
     }
     try {
       await fetch('/api/search/cancel', { method: 'POST' });
     } catch (_) {}
     btnCancelSearch.style.display = 'none';
+    if (btnSearch) {
+      btnSearch.disabled = false;
+      btnSearch.innerHTML = '🔍 검색';
+    }
+    isSearchInProgress = false;
     kwicResultMeta.innerHTML = '<strong style="color:#dc2626;">⏹ 사용자에 의해 검색이 종료되었습니다.</strong>';
   });
 
@@ -420,11 +438,13 @@
         });
       });
 
-      // Run initial showcase search
-      searchInput.value = '세계__02';
-      selectMode.value = 'all';
-      selectLayer.value = 'ALL';
-      runSearch();
+      // Run initial showcase search (사용자가 이미 입력 중인 경우 덮어쓰지 않음)
+      if (!searchInput.value.trim() && document.activeElement !== searchInput) {
+        searchInput.value = '세계__02';
+        selectMode.value = 'all';
+        selectLayer.value = 'ALL';
+        runSearch();
+      }
     } catch (err) {
       console.error('Overview load error:', err);
     }
@@ -1005,25 +1025,40 @@
   });
 
   async function runSearch() {
-    // Cancel any previous running search first
-    if (currentSearchAbort) {
-      currentSearchAbort.abort();
-    }
-    currentSearchAbort = new AbortController();
-
-    // Allow leading/trailing space for word boundary queries (e.g. ' 하도 ')
+    // 1. 선행 파라미터 안전 조회 (TDZ 방지)
     const q = searchInput.value;
-    if (!q.trim() && docId === 'ALL') {
-      kwicResultMeta.innerHTML = '<span style="color:#64748b;">검색어를 입력하거나 특정 문서를 선택해 주세요.</span>';
-      return;
-    }
     const mode = selectMode.value;
     const layer = selectLayer.value;
     const docId = selectDoc.value;
     const contextWords = selectContextWords.value;
     const limit = selectLimit.value;
 
+    if (!q.trim() && docId === 'ALL') {
+      kwicResultMeta.innerHTML = '<span style="color:#64748b;">검색어를 입력하거나 특정 문서를 선택해 주세요.</span>';
+      return;
+    }
+
+    // 2. 직전 검색이 진행 중인 경우 조용히 취소 (새 검색으로 인한 정상 교체)
+    searchExplicitlyCancelled = false;
+    if (currentSearchAbort) {
+      try {
+        currentSearchAbort.abort();
+      } catch (_) {}
+      currentSearchAbort = null;
+    }
+
+    // 3. 고유 시퀀스 번호 및 AbortController 발급
+    const mySearchSeq = ++currentSearchSeq;
+    const myAbortController = new AbortController();
+    currentSearchAbort = myAbortController;
+    isSearchInProgress = true;
+
+    // UI 상태 반영 (취소 버튼 노출 및 검색 버튼 비활성화)
     btnCancelSearch.style.display = 'inline-flex';
+    if (btnSearch) {
+      btnSearch.disabled = true;
+      btnSearch.innerHTML = '⏳ 검색 중...';
+    }
     kwicResultMeta.innerHTML = '<strong style="color:#2563eb;">⏳ 검색 진행 중… (우측 [⏹ 검색 종료] 버튼으로 중단 가능)</strong>';
 
     const qs = new URLSearchParams({
@@ -1037,10 +1072,21 @@
 
     try {
       const res = await fetch(`/api/search?${qs.toString()}`, {
-        signal: currentSearchAbort.signal,
+        signal: myAbortController.signal,
       });
       const data = await res.json();
+
+      // 만약 응답 도착 시점에 더 최신의 새 검색이 시작되었다면 이 결과는 폐기
+      if (mySearchSeq !== currentSearchSeq) {
+        return;
+      }
+
+      isSearchInProgress = false;
       btnCancelSearch.style.display = 'none';
+      if (btnSearch) {
+        btnSearch.disabled = false;
+        btnSearch.innerHTML = '🔍 검색';
+      }
       currentSearchAbort = null;
 
       if (data.error) {
@@ -1094,9 +1140,23 @@
       renderTabsBar();
       renderActiveTabHits();
     } catch (err) {
+      // 최신 검색이 아닌 이전 검색의 Abort/Error라면 현재 화면을 전혀 건드리지 않고 조용히 폐기
+      if (mySearchSeq !== currentSearchSeq) {
+        return;
+      }
+
+      isSearchInProgress = false;
       btnCancelSearch.style.display = 'none';
+      if (btnSearch) {
+        btnSearch.disabled = false;
+        btnSearch.innerHTML = '🔍 검색';
+      }
+
       if (err.name === 'AbortError') {
-        kwicResultMeta.innerHTML = '<strong style="color:#dc2626;">⏹ 검색이 사용자에 의해 중단되었습니다.</strong>';
+        // 사용자가 [⏹ 검색 종료] 버튼을 직접 눌렀을 때만 중단 메시지 표시
+        if (searchExplicitlyCancelled) {
+          kwicResultMeta.innerHTML = '<strong style="color:#dc2626;">⏹ 검색이 사용자에 의해 중단되었습니다.</strong>';
+        }
       } else {
         kwicResultMeta.textContent = `검색 오류: ${err.message}`;
       }
