@@ -136,7 +136,7 @@
             <button class="btn btn-danger" id="btn-cancel-search" type="button" style="display: none;" title="실행 중인 정규식/대용량 검색을 즉시 중단합니다.">
               ⏹ 검색 종료
             </button>
-            <button class="btn btn-old-toggle" id="btn-toggle-old-ime" type="button" title="켜면 한컴오피스 두벌식 옛글 방식(ㅏ×2=ㆍ, Shift+F=ㅿ, Shift+D=ㆁ, ㅂ+ㅇ=ㅸ 등)으로 조합됩니다.">
+            <button class="btn btn-old-toggle" id="btn-toggle-old-ime" type="button" title="켜면 한컴오피스 두벌식 옛글 방식(ㅏ×2=ㆍ, Shift+ㅁ=ㅿ, Shift+ㅇ=ㆁ, ㅂ+ㅇ=ㅸ 등)으로 조합됩니다.">
               ⌨️ 옛한글 입력: OFF
             </button>
             <button class="btn btn-outline" id="btn-toggle-jamo-pad" type="button" title="마우스로 옛글 자모를 클릭해 입력할 수 있는 소형 자판을 여닫습니다.">
@@ -156,9 +156,9 @@
             <button type="button" class="jamo-btn" data-type="V" data-name="ARAEA">ㆍ <small>ㅏ×2</small></button>
             <button type="button" class="jamo-btn" data-type="V_SEQ" data-seq="ARAEA,ARAEA">ᆢ <small>ㅏ×3</small></button>
             <button type="button" class="jamo-btn" data-type="V_SEQ" data-seq="ARAEA,I">ㆎ <small>ㆍ+ㅣ</small></button>
-            <button type="button" class="jamo-btn" data-type="L" data-name="PANSIOS">ㅿ <small>Shift+F</small></button>
-            <button type="button" class="jamo-btn" data-type="L" data-name="YESIEUNG">ㆁ <small>Shift+D</small></button>
-            <button type="button" class="jamo-btn" data-type="L" data-name="YEORINHIEUH">ㆆ <small>Shift+G</small></button>
+            <button type="button" class="jamo-btn" data-type="L" data-name="PANSIOS">ㅿ <small>Shift+ㅁ</small></button>
+            <button type="button" class="jamo-btn" data-type="L" data-name="YESIEUNG">ㆁ <small>Shift+ㅇ</small></button>
+            <button type="button" class="jamo-btn" data-type="L" data-name="YEORINHIEUH">ㆆ <small>Shift+ㅎ</small></button>
             <button type="button" class="jamo-btn" data-type="L" data-name="KAPYEOUNPIEUP">ㅸ <small>ㅂ+ㅇ</small></button>
             <button type="button" class="jamo-btn" data-type="L" data-name="KAPYEOUNMIEUM">ㅱ <small>ㅁ+ㅇ</small></button>
             <button type="button" class="jamo-btn" data-type="L" data-name="KAPYEOUNPHIEUPH">ㆄ <small>ㅍ+ㅇ</small></button>
@@ -458,8 +458,8 @@
                     </tr>
                     <tr>
                       <td><strong>ㅿ · ㆁ · ㆆ</strong></td>
-                      <td><code>Shift + F</code> = <strong>ㅿ(반치음)</strong> · <code>Shift + D</code> = <strong>ㆁ(옛이응)</strong> · <code>Shift + G</code> = <strong>ㆆ(여린히읗)</strong></td>
-                      <td><code>d u e Shift+F k k d h k</code> → <strong>엳ᄌᆞ와</strong></td>
+                      <td><code>Shift + ㅁ(A)</code> = <strong>ㅿ(반치음)</strong> · <code>Shift + ㅇ(D)</code> = <strong>ㆁ(옛이응)</strong> · <code>Shift + ㅎ(G)</code> = <strong>ㆆ(여린히읗)</strong></td>
+                      <td><code>d u e Shift+A(ㅁ) k k d h k</code> → <strong>엳ᄌᆞ와</strong></td>
                     </tr>
                     <tr>
                       <td><strong>ㅸ · ㅱ · ㆄ · ᄛ · ㅹ</strong><br/>(순경음 연서)</td>
@@ -473,7 +473,7 @@
                     </tr>
                     <tr>
                       <td><strong>반치음 · 옛이응 · 여린히읗 · 방점</strong></td>
-                      <td><code>Shift+A/F</code>=<strong>ㅿ(반치음 ᅀ)</strong>, <code>Shift+S/D</code>=<strong>ㆁ(옛이응 ᅌ)</strong>, <code>Shift+G</code>=<strong>ㆆ(여린히읗)</strong><br/><code>Shift+Z/X</code>=<strong>ᄼ/ᄾ</strong>, <code>Shift+C/V</code>=<strong>ᅎ/ᅐ</strong>, <code>Shift+Y/U</code>=<strong>거성(〮)/상성(〯)</strong></td>
+                      <td><code>Shift+A(ㅁ)</code>=<strong>ㅿ(반치음 ᅀ)</strong>, <code>Shift+D(ㅇ)</code>=<strong>ㆁ(옛이응 ᅌ)</strong>, <code>Shift+G(ㅎ)</code>=<strong>ㆆ(여린히읗)</strong><br/><code>Shift+Z/X</code>=<strong>ᄼ/ᄾ</strong>, <code>Shift+C/V</code>=<strong>ᅎ/ᅐ</strong>, <code>Shift+Y/U</code>=<strong>거성(〮)/상성(〯)</strong></td>
                       <td>화상 자판(<code>🧮 옛글 낱자판</code>) 클릭 입력도 지원</td>
                     </tr>
                   </tbody>

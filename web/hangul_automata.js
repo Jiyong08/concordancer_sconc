@@ -32,9 +32,9 @@ const KEY_LAYOUT = {
   KeyP: { base: ['V', 'E', 'ㅔ'], shift: ['V', 'YE', 'ㅖ'] },
 
   KeyA: { base: ['L', 'MIEUM', 'ㅁ'], shift: ['L', 'PANSIOS', 'ㅿ'] },
-  KeyS: { base: ['L', 'NIEUN', 'ㄴ'], shift: ['L', 'YESIEUNG', 'ㆁ'] },
+  KeyS: { base: ['L', 'NIEUN', 'ㄴ'], shift: ['L', 'NIEUN', 'ㄴ'] },
   KeyD: { base: ['L', 'IEUNG', 'ㅇ'], shift: ['L', 'YESIEUNG', 'ㆁ'] },
-  KeyF: { base: ['L', 'RIEUL', 'ㄹ'], shift: ['L', 'PANSIOS', 'ㅿ'] },
+  KeyF: { base: ['L', 'RIEUL', 'ㄹ'], shift: ['L', 'RIEUL', 'ㄹ'] },
   KeyG: { base: ['L', 'HIEUH', 'ㅎ'], shift: ['L', 'YEORINHIEUH', 'ㆆ'] },
   KeyH: { base: ['V', 'O', 'ㅗ'], shift: ['V', 'O', 'ㅗ'] },
   KeyJ: { base: ['V', 'EO', 'ㅓ'], shift: ['V', 'EO', 'ㅓ'] },
