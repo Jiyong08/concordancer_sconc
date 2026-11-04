@@ -36,14 +36,11 @@ let isSearchInProgress = false;
   const chkTargetSense = document.getElementById('chk-target-sense');
   const chkTargetSyntax = document.getElementById('chk-target-syntax');
 
-  const chkMethodText = document.getElementById('chk-method-text');
   const chkMethodJamo = document.getElementById('chk-method-jamo');
   const chkMethodRegex = document.getElementById('chk-method-regex');
 
   const btnTargetAll = document.getElementById('btn-target-all');
   const btnTargetSurfaceOnly = document.getElementById('btn-target-surface-only');
-  const btnMethodTextOnly = document.getElementById('btn-method-text-only');
-  const btnMethodJamoRegex = document.getElementById('btn-method-jamo-regex');
   const selectLayer = document.getElementById('select-layer');
   const selectDoc = document.getElementById('select-doc');
   const selectContextWords = document.getElementById('select-context-words');
@@ -1472,9 +1469,9 @@ let isSearchInProgress = false;
 
   function getSelectedSearchMethods() {
     const methods = [];
-    if (chkMethodText && chkMethodText.checked) methods.push('text');
     if (chkMethodJamo && chkMethodJamo.checked) methods.push('jamo');
     if (chkMethodRegex && chkMethodRegex.checked) methods.push('regex');
+    // 자소 검색과 정규식 검색을 둘 다 선택하지 않으면 기본 텍스트 검색 적용
     return methods.length > 0 ? methods : ['text'];
   }
 
@@ -1489,11 +1486,16 @@ let isSearchInProgress = false;
     if (targets.includes('syntax')) targetNames.push('구문');
     const targetStr = targetNames.length === 4 ? '전체 층위' : targetNames.join('·');
 
-    const methodNames = [];
-    if (methods.includes('text')) methodNames.push('텍스트');
-    if (methods.includes('jamo')) methodNames.push('자소');
-    if (methods.includes('regex')) methodNames.push('정규식');
-    const methodStr = methodNames.join('+');
+    let methodStr = '기본 텍스트';
+    const hasJamo = methods.includes('jamo');
+    const hasRegex = methods.includes('regex');
+    if (hasJamo && hasRegex) {
+      methodStr = '자소+정규식';
+    } else if (hasJamo) {
+      methodStr = '자소';
+    } else if (hasRegex) {
+      methodStr = '정규식';
+    }
 
     const summaryText = `${targetStr} · ${methodStr}`;
     if (searchMethodSummaryLabel) {
@@ -1536,7 +1538,7 @@ let isSearchInProgress = false;
 
     // Checkbox change handlers
     [chkTargetSurface, chkTargetMorph, chkTargetSense, chkTargetSyntax,
-     chkMethodText, chkMethodJamo, chkMethodRegex].forEach((chk) => {
+     chkMethodJamo, chkMethodRegex].forEach((chk) => {
       if (chk) {
         chk.addEventListener('change', () => {
           updateSearchMethodSummaryLabel();
@@ -1544,7 +1546,7 @@ let isSearchInProgress = false;
       }
     });
 
-    // Quick preset buttons
+    // Quick preset buttons for targets
     if (btnTargetAll) {
       btnTargetAll.addEventListener('click', () => {
         if (chkTargetSurface) chkTargetSurface.checked = true;
@@ -1560,30 +1562,6 @@ let isSearchInProgress = false;
         if (chkTargetMorph) chkTargetMorph.checked = false;
         if (chkTargetSense) chkTargetSense.checked = false;
         if (chkTargetSyntax) chkTargetSyntax.checked = false;
-        updateSearchMethodSummaryLabel();
-      });
-    }
-    if (btnMethodTextOnly) {
-      btnMethodTextOnly.addEventListener('click', () => {
-        if (chkMethodText) chkMethodText.checked = true;
-        if (chkMethodJamo) chkMethodJamo.checked = false;
-        if (chkMethodRegex) chkMethodRegex.checked = false;
-        updateSearchMethodSummaryLabel();
-      });
-    }
-    if (btnMethodJamoRegex) {
-      btnMethodJamoRegex.addEventListener('click', () => {
-        if (chkMethodText) chkMethodText.checked = false;
-        if (chkMethodJamo) chkMethodJamo.checked = true;
-        if (chkMethodRegex) chkMethodRegex.checked = true;
-        updateSearchMethodSummaryLabel();
-      });
-    }
-    if (btnMethodAll) {
-      btnMethodAll.addEventListener('click', () => {
-        if (chkMethodText) chkMethodText.checked = true;
-        if (chkMethodJamo) chkMethodJamo.checked = true;
-        if (chkMethodRegex) chkMethodRegex.checked = true;
         updateSearchMethodSummaryLabel();
       });
     }

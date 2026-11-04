@@ -689,23 +689,11 @@
           <div class="method-section-card">
             <div class="method-section-header">
               <div class="method-section-title">
-                <span>⚙️ 2. 검색 연산 방식 (복합 선택)</span>
-              </div>
-              <div class="method-quick-btns">
-                <button type="button" class="btn btn-outline btn-xs" id="btn-method-text-only">텍스트만</button>
-                <button type="button" class="btn btn-outline btn-xs" id="btn-method-jamo-regex">자소+정규식</button>
-                <button type="button" class="btn btn-outline btn-xs" id="btn-method-all">모든 방식</button>
+                <span>⚙️ 2. 특수 검색 연산 방식 (선택 사항)</span>
               </div>
             </div>
-            <p class="method-section-desc">질의어를 해석하고 검색할 알고리즘 연산 방식을 선택합니다.</p>
+            <p class="method-section-desc">자소나 정규식 검색이 필요할 때 선택합니다. (미선택 시 기본 텍스트 검색 자동 적용)</p>
             <div class="method-item-list">
-              <label class="method-item-label">
-                <input type="checkbox" id="chk-method-text" checked />
-                <div class="method-item-text">
-                  <strong>기본 텍스트 검색 (음절/어절)</strong>
-                  <span>NFD 자모 정규화 및 한양 PUA 변환을 지원하는 기본 음절 일치 검색</span>
-                </div>
-              </label>
               <label class="method-item-label">
                 <input type="checkbox" id="chk-method-jamo" />
                 <div class="method-item-text">
