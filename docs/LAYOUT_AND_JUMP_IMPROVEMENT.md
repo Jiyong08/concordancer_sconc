@@ -101,10 +101,13 @@
 ## 4. 검증 결과
 
 ### 4.1 Rust 단위 테스트 (`cargo test`)
-- 위치 추적 정밀도 및 에디터 연동 API 유효성에 대한 단위 테스트 100% 통과:
-  - `test_find_target_line_xml_hunmong`: `훈몽자회.xml`의 '天' 항목 검색 시 정확히 **라인 #11** 적중 검증 완료.
-  - `test_find_target_line_xml_sent`: `간이벽온방.xml`의 문장 검색 시 정확히 **라인 #10** 적중 검증 완료.
-  - `test_find_target_line_sejong`: `BTAA0001.txt` 세종 말뭉치 문장 검색 시 정확히 **라인 #118** 적중 검증 완료.
+- 정밀 매칭 줄 탐색(`find_target_line_in_source`) 및 자소/음절/어절 단위 테스트 통과 (6개 테스트 100% 통과):
+  - `test_find_target_line_in_source_exact`: XML `<s n="2" id="...">` 구조 및 원문 텍스트 기반 4단계 점프 라인 탐색 알고리즘 검증 완료.
+  - `test_space_word_boundary_rules`: 공백 기반 어절 경계 및 문장 첫머리 매칭 검증 완료.
+  - `test_syllable_vs_jamo_matching`: 음절 vs 자소 매칭 분기 검증 완료.
+  - `test_jamo_0_1_01_syntax`: 신규 `0`, `1`, `01` 자소 슬롯 표기법 검증 완료.
+  - `test_morph_jamo_search`: 형태소 필드 `morph_flat` 대상 자소 매칭 검증 완료.
+  - `test_expand_bracket_syntax_to_regex`: 자소+정규식 복합 쿼리 변환 검증 완료.
 
 ### 4.2 자바스크립트 문법 검증
 - `node -c web/app.js`: 문법 에러 0건, 정상 통과.

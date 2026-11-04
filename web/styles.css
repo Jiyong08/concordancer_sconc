@@ -229,26 +229,7 @@ html, body {
   color: #475569;
 }
 
-.btn-fold-link {
-  background: none;
-  border: 1px solid #bfdbfe;
-  color: #2563eb;
-  cursor: pointer;
-  font-size: 0.78rem;
-  font-weight: 600;
-  padding: 3px 8px;
-  border-radius: 4px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  background-color: #eff6ff;
-  transition: all 0.15s ease;
-}
 
-.btn-fold-link:hover {
-  background-color: #dbeafe;
-  border-color: #93c5fd;
-}
 
 .search-options-bar {
   display: flex;

@@ -996,15 +996,15 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
             bg_dup = is_file_duplicate_in_db(existing_files_map, str(kmap["BG"]), conn)
             if bt_dup and bs_dup and bg_dup:
                 for k in ("BT", "BS", "BG"):
-                    processed_files.add(kmap[k].name)
+                    processed_files.add(str(kmap[k].resolve()))
                     report["skipped_files_list"].append(kmap[k].name)
                 report["skipped_existing_files"] += 3
                 report["skipped_existing_documents"] += 1
-                emit_progress("skipped", f"BTAA{code}.txt 등 3개 파일", f"BRAA{code}_LINKED", f"[건너뜀] 이미 DB에 등록된 말뭉치 (내용 동일): 세종 3중 연동 ({code})")
+                emit_progress("skipped", f"BT{code}.txt 등 3개 파일", f"BR{code}_LINKED", f"[건너뜀] 이미 DB에 등록된 말뭉치 (내용 동일): 세종 3중 연동 ({code})")
                 continue
 
             # 세종 3중 연동 처리!
-            emit_progress("processing", f"BTAA{code}.txt 외 2개", f"BRAA{code}_LINKED", f"세종 3중 연동 말뭉치 감지 (코드 {code}): BTAA+BSAA+BGAA 처리 중...")
+            emit_progress("processing", f"BT{code}.txt 외 2개", f"BR{code}_LINKED", f"세종 3중 연동 말뭉치 감지 (코드 {code}): BTAA+BSAA+BGAA 처리 중...")
             
             # self-contained
             doc_info, file_records, segments = parse_braa0001_triplet(
@@ -1015,7 +1015,7 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
                 r["file_hash"] = compute_file_hash(str(kmap[k]))
             s_cnt, e_cnt = save_document_and_segments(conn, doc_info, file_records, segments)
             for k in ("BT", "BS", "BG"):
-                processed_files.add(kmap[k].name)
+                processed_files.add(str(kmap[k].resolve()))
             report["documents_created"] += 1
             report["sentences_imported"] += s_cnt
             report["eojeols_imported"] += e_cnt
@@ -1025,12 +1025,12 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
                 "files": [kmap["BT"].name, kmap["BS"].name, kmap["BG"].name],
                 "sentences": s_cnt
             })
-            emit_progress("document_done", f"BTAA{code}.txt", doc_info["doc_id"], f"세종 3중 연동 완료: {doc_info['doc_id']} ({s_cnt:,}문장)")
+            emit_progress("document_done", f"BT{code}.txt", doc_info["doc_id"], f"세종 3중 연동 완료: {doc_info['doc_id']} ({s_cnt:,}문장)")
 
     # 2. 학습자 말뭉치 연동 감지 (sample_*.txt + sample_*.xml)
     learner_pairs = {}
     for f in all_files:
-        if f.name in processed_files:
+        if str(f.resolve()) in processed_files:
             continue
         m = re.match(r"^(.*)\.(txt|xml)$", f.name, re.I)
         if m:
@@ -1042,8 +1042,8 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
             t_dup = is_file_duplicate_in_db(existing_files_map, str(extmap["txt"]), conn)
             x_dup = is_file_duplicate_in_db(existing_files_map, str(extmap["xml"]), conn)
             if t_dup and x_dup:
-                processed_files.add(extmap["txt"].name)
-                processed_files.add(extmap["xml"].name)
+                processed_files.add(str(extmap["txt"].resolve()))
+                processed_files.add(str(extmap["xml"].resolve()))
                 report["skipped_files_list"].extend([extmap["txt"].name, extmap["xml"].name])
                 report["skipped_existing_files"] += 2
                 report["skipped_existing_documents"] += 1
@@ -1089,8 +1089,8 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
                     }
                 ]
                 s_cnt, e_cnt = save_document_and_segments(conn, doc_info, file_recs, segs)
-                processed_files.add(extmap["txt"].name)
-                processed_files.add(extmap["xml"].name)
+                processed_files.add(str(extmap["txt"].resolve()))
+                processed_files.add(str(extmap["xml"].resolve()))
                 report["documents_created"] += 1
                 report["sentences_imported"] += s_cnt
                 report["eojeols_imported"] += e_cnt
@@ -1104,12 +1104,12 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
 
     # 3. 개별 파일 내용 기반 유형 자동 판별
     for f in all_files:
-        if f.name in processed_files:
+        if str(f.resolve()) in processed_files:
             continue
 
         # 중복 검사: 파일명이 동일하고 내용(크기 및 해시)도 동일한 경우 건너뜀
         if is_file_duplicate_in_db(existing_files_map, str(f), conn):
-            processed_files.add(f.name)
+            processed_files.add(str(f.resolve()))
             report["skipped_files_list"].append(f.name)
             report["skipped_existing_files"] += 1
             report["skipped_existing_documents"] += 1
@@ -1152,7 +1152,7 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
                 report["sentences_imported"] += s_cnt
                 report["eojeols_imported"] += e_cnt
                 report["items"].append({"type": "옛한글 사전류", "doc_id": doc_info["doc_id"], "files": [fname], "sentences": s_cnt})
-                processed_files.add(fname)
+                processed_files.add(str(f.resolve()))
                 emit_progress("document_done", fname, doc_info["doc_id"], f"문서 구축 완료: {doc_info['doc_id']} ({s_cnt:,}문장)")
 
             # A-2. 옛한글 언해문/대역/문헌류 (<sent ...> ... </sent>)
@@ -1183,7 +1183,7 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
                 report["sentences_imported"] += s_cnt
                 report["eojeols_imported"] += e_cnt
                 report["items"].append({"type": "옛한글 문헌/언해문", "doc_id": doc_info["doc_id"], "files": [fname], "sentences": s_cnt})
-                processed_files.add(fname)
+                processed_files.add(str(f.resolve()))
                 emit_progress("document_done", fname, doc_info["doc_id"], f"문서 구축 완료: {doc_info['doc_id']} ({s_cnt:,}문장)")
 
             # A-3. 단독 학습자 형태 분석 XML
@@ -1215,7 +1215,7 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
                 report["sentences_imported"] += s_cnt
                 report["eojeols_imported"] += e_cnt
                 report["items"].append({"type": "학습자 형태 XML", "doc_id": doc_info["doc_id"], "files": [fname], "sentences": s_cnt})
-                processed_files.add(fname)
+                processed_files.add(str(f.resolve()))
                 emit_progress("document_done", fname, doc_info["doc_id"], f"문서 구축 완료: {doc_info['doc_id']} ({s_cnt:,}문장)")
 
         # (B) JSON 파일 판별 (모두의 말뭉치 표준)
@@ -1246,7 +1246,7 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
             report["sentences_imported"] += s_cnt
             report["eojeols_imported"] += e_cnt
             report["items"].append({"type": cat, "doc_id": doc_info["doc_id"], "files": [fname], "sentences": s_cnt})
-            processed_files.add(fname)
+            processed_files.add(str(f.resolve()))
             emit_progress("document_done", fname, doc_info["doc_id"], f"문서 구축 완료: {doc_info['doc_id']} ({s_cnt:,}문장)")
 
         # (C) TXT 파일 판별
@@ -1279,7 +1279,7 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
                 report["sentences_imported"] += s_cnt
                 report["eojeols_imported"] += e_cnt
                 report["items"].append({"type": "세종 구어 형태소", "doc_id": doc_info["doc_id"], "files": [fname], "sentences": s_cnt})
-                processed_files.add(fname)
+                processed_files.add(str(f.resolve()))
                 emit_progress("document_done", fname, doc_info["doc_id"], f"문서 구축 완료: {doc_info['doc_id']} ({s_cnt:,}문장)")
 
             # C-2. 세종 구어 전사 원시 (4CM* 스타일: <u who> <s n>)
@@ -1310,7 +1310,7 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
                 report["sentences_imported"] += s_cnt
                 report["eojeols_imported"] += e_cnt
                 report["items"].append({"type": "세종 구어 전사", "doc_id": doc_info["doc_id"], "files": [fname], "sentences": s_cnt})
-                processed_files.add(fname)
+                processed_files.add(str(f.resolve()))
                 emit_progress("document_done", fname, doc_info["doc_id"], f"문서 구축 완료: {doc_info['doc_id']} ({s_cnt:,}문장)")
 
             # C-3. 세종 문어 TEI 원시 (2BA* 스타일: <date>, <page>, <head>, <p>)
@@ -1341,7 +1341,7 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
                 report["sentences_imported"] += s_cnt
                 report["eojeols_imported"] += e_cnt
                 report["items"].append({"type": "세종 문어 원시", "doc_id": doc_info["doc_id"], "files": [fname], "sentences": s_cnt})
-                processed_files.add(fname)
+                processed_files.add(str(f.resolve()))
                 emit_progress("document_done", fname, doc_info["doc_id"], f"문서 구축 완료: {doc_info['doc_id']} ({s_cnt:,}문장)")
 
             # C-4. 일반 평문 및 대본/희곡 텍스트
@@ -1374,7 +1374,7 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
                 report["sentences_imported"] += s_cnt
                 report["eojeols_imported"] += e_cnt
                 report["items"].append({"type": cat, "doc_id": doc_info["doc_id"], "files": [fname], "sentences": s_cnt})
-                processed_files.add(fname)
+                processed_files.add(str(f.resolve()))
                 emit_progress("document_done", fname, doc_info["doc_id"], f"문서 구축 완료: {doc_info['doc_id']} ({s_cnt:,}문장)")
 
     conn.close()

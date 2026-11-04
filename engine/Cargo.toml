@@ -17,7 +17,3 @@ urlencoding = "2.1"
 [[bin]]
 name = "sconc"
 path = "src/main.rs"
-
-[[bin]]
-name = "concordance-engine"
-path = "src/main.rs"

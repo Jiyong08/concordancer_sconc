@@ -417,6 +417,9 @@ let isSearchInProgress = false;
 
       globalDocuments = data.documents || [];
       globalSourceFiles = data.source_files || [];
+      if (selectLayer && selectLayer.options && selectLayer.options.length > 0) {
+        selectLayer.options[0].textContent = `전체 말뭉치 (${data.total_sentences.toLocaleString()}문장)`;
+      }
       updateDocSelectorTriggerLabel();
 
       const mapTbody = document.getElementById('mapping-tbody');
@@ -512,10 +515,11 @@ let isSearchInProgress = false;
     if (!docSelectorLabel) return;
     const isAll = selectedDocIds.has('ALL') || selectedDocIds.size === globalDocuments.length || selectedDocIds.size === 0;
     if (isAll) {
-      docSelectorLabel.textContent = `📂 전체 문서 (${globalDocuments.length || 13}개 파일)`;
+      const docCount = globalDocuments.length;
+      docSelectorLabel.textContent = `📂 전체 문서 (${docCount}개 문서)`;
       docSelectorLabel.style.color = '#1e293b';
     } else {
-      docSelectorLabel.textContent = `📂 ${selectedDocIds.size}개 파일 선택됨`;
+      docSelectorLabel.textContent = `📂 ${selectedDocIds.size}개 문서 선택됨`;
       docSelectorLabel.style.color = '#2563eb';
     }
   }

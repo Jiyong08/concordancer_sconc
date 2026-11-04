@@ -125,6 +125,7 @@ struct TextUnit {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
 enum GlobOp {
     Zero,      // 0 : 0 atomic jamos (empty/none)
     One,       // 1 : exactly 1 atomic jamo (any)
@@ -3221,6 +3222,31 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn test_find_target_line_in_source_exact() {
+        let lines = vec![
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>",
+            "<TEI>",
+            "  <text>",
+            "    <s n=\"1\" id=\"BTAA0001-00000001\">첫 번째 문장입니다.</s>",
+            "    <s n=\"2\" id=\"BTAA0001-00000002\">두 번째 훈몽자회 구문입니다.</s>",
+            "  </text>",
+            "</TEI>",
+        ];
+
+        // 1. Exact sent_id match
+        let idx1 = find_target_line_in_source(&lines, "BTAA0001-00000002", "", "", 2);
+        assert_eq!(idx1, Some(4), "Should match line 4 by sent_id");
+
+        // 2. Sent_id suffix / n attribute match
+        let idx2 = find_target_line_in_source(&lines, "2", "", "", 2);
+        assert_eq!(idx2, Some(4), "Should match line 4 by digit n=\"2\"");
+
+        // 3. Raw text match fallback
+        let idx3 = find_target_line_in_source(&lines, "", "첫 번째 문장", "", 1);
+        assert_eq!(idx3, Some(3), "Should match line 3 by raw text");
+    }
+
     #[test]
     fn test_jamo_0_1_01_syntax() {
         let normalizer = Normalizer::new(std::path::Path::new("assets/data/pua_table.json"));
