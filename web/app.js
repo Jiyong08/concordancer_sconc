@@ -312,6 +312,8 @@ let isSearchInProgress = false;
         automata.feedConsonant(val);
       } else if (kind === 'LL') {
         automata.feedDoubleConsonant(val);
+      } else if (kind === 'L_SEQ') {
+        val.forEach((p) => automata.feedConsonant(p));
       } else if (kind === 'V') {
         automata.feedVowel(val);
       } else if (kind === 'TONE') {
@@ -339,6 +341,9 @@ let isSearchInProgress = false;
       const t = btn.dataset.type;
       if (t === 'L') {
         automata.feedConsonant(btn.dataset.name);
+      } else if (t === 'L_SEQ') {
+        const parts = btn.dataset.seq.split(',');
+        parts.forEach((p) => automata.feedConsonant(p));
       } else if (t === 'V') {
         automata.feedVowel(btn.dataset.name);
       } else if (t === 'V_SEQ') {
