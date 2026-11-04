@@ -210,11 +210,11 @@ let isSearchInProgress = false;
     if (expanded) {
       inspectorFoldCard.classList.add('expanded');
       inspectorFoldArrow.textContent = '▼';
-      btnFoldToggleBtn.textContent = '접기 ▴';
+      btnFoldToggleBtn.textContent = '접기 ▾';
     } else {
       inspectorFoldCard.classList.remove('expanded');
       inspectorFoldArrow.textContent = '▶';
-      btnFoldToggleBtn.textContent = '펼치기 ▾';
+      btnFoldToggleBtn.textContent = '펼치기 ▴';
     }
     updateInspectorHeaderSummary();
   }
