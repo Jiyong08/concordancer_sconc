@@ -61,7 +61,7 @@ html, body {
   margin: 0 auto;
   min-height: 100vh;
   height: auto;
-  width: 100vw;
+  width: 100%;
   min-width: 960px;
   overflow: visible;
   box-shadow: 0 0 32px rgba(0, 0, 0, 0.5);
@@ -69,23 +69,24 @@ html, body {
 
 .app-shell.ratio-16-9 {
   width: max(960px, min(100vw, calc(100vh * 16 / 9)));
-  height: min(100vh, calc(100vw * 9 / 16));
-  margin: calc((100vh - min(100vh, calc(100vw * 9 / 16))) / 2) auto;
-  border-radius: 6px;
+  min-height: 100vh;
+  height: auto;
+  margin: 0 auto;
 }
 
 .app-shell.ratio-4-3 {
   width: max(960px, min(100vw, calc(100vh * 4 / 3)));
-  height: min(100vh, calc(100vw * 3 / 4));
-  margin: calc((100vh - min(100vh, calc(100vw * 3 / 4))) / 2) auto;
-  border-radius: 6px;
+  min-height: 100vh;
+  height: auto;
+  margin: 0 auto;
 }
 
 .app-shell.ratio-full {
-  width: 100vw;
+  width: 100%;
   min-width: 960px;
-  height: 100vh;
-  margin: 0;
+  min-height: 100vh;
+  height: auto;
+  margin: 0 auto;
 }
 
 .corpus-text {
