@@ -1284,6 +1284,18 @@ fn handle_search(
     let core_query = raw_query.trim();
     let mode = params.get("mode").map(|s| s.as_str()).unwrap_or("all");
     let doc_filter = params.get("doc_id").map(|s| s.as_str()).unwrap_or("ALL");
+    let doc_ids_raw = params.get("doc_ids").map(|s| s.as_str()).unwrap_or("");
+    let selected_doc_ids: Vec<String> = if !doc_ids_raw.is_empty() {
+        doc_ids_raw
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty() && s != "ALL")
+            .collect()
+    } else if doc_filter != "ALL" && !doc_filter.is_empty() {
+        vec![doc_filter.to_string()]
+    } else {
+        Vec::new()
+    };
     let cat_filter = params.get("category").map(|s| s.as_str()).unwrap_or("ALL");
     let layer_filter = params
         .get("layer_filter")
@@ -1314,7 +1326,7 @@ fn handle_search(
 
     let bracket_tokens = state.normalizer.parse_bracket_query(core_query);
 
-    if core_query.is_empty() && doc_filter == "ALL" && layer_filter == "ALL" && cat_filter == "ALL" {
+    if core_query.is_empty() && selected_doc_ids.is_empty() && layer_filter == "ALL" && cat_filter == "ALL" {
         return json_response(
             &SearchResponse {
                 query: raw_query.to_string(),
@@ -1363,9 +1375,12 @@ fn handle_search(
     );
     let mut sql_params: Vec<String> = Vec::new();
 
-    if doc_filter != "ALL" && !doc_filter.is_empty() {
-        sql.push_str(" AND s.doc_id = ?");
-        sql_params.push(doc_filter.to_string());
+    if !selected_doc_ids.is_empty() {
+        let placeholders = vec!["?"; selected_doc_ids.len()].join(", ");
+        sql.push_str(&format!(" AND s.doc_id IN ({})", placeholders));
+        for did in &selected_doc_ids {
+            sql_params.push(did.clone());
+        }
     }
     if cat_filter != "ALL" && !cat_filter.is_empty() {
         sql.push_str(" AND d.corpus_category LIKE ?");

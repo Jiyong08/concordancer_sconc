@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>sconc v0.1 — 한국어 통시·공시 다층 말뭉치 통합 검색기</title>
-  <link rel="stylesheet" href="/styles.css?v=2" />
+  <link rel="stylesheet" href="/styles.css?v=3" />
 </head>
 <body>
   <div class="app-shell ratio-full" id="app-shell">
@@ -97,10 +97,10 @@
             </div>
 
             <div class="opt-pill">
-              <label for="select-doc">문서지정</label>
-              <select id="select-doc" style="max-width: 195px;">
-                <option value="ALL">전체 문서 (13종)</option>
-              </select>
+              <label for="btn-open-doc-selector">문서지정</label>
+              <button type="button" class="btn-doc-selector-trigger" id="btn-open-doc-selector" title="원본 말뭉치가 저장된 폴더 및 하위 파일 구조를 트리 형태로 확인하고, 검색할 파일들을 체크박스로 다중 선택합니다.">
+                <span id="doc-selector-label">📂 전체 문서 (13개 파일)</span> ▾
+              </button>
             </div>
 
             <div class="opt-pill">
@@ -163,6 +163,9 @@
             </button>
             <button class="btn btn-outline" id="btn-clear-input" type="button">
               ✕ 지우기
+            </button>
+            <button class="btn btn-outline btn-toggle-options-inline" id="btn-toggle-options-inline" type="button" title="검색창 상단의 옵션 바(검색방식, 필터, 문서지정 등)를 접거나 펼쳐 화면 공간을 넓힙니다.">
+              <span id="inline-fold-icon">🔼</span> <span id="inline-fold-text">검색옵션 접기</span>
             </button>
           </div>
 
@@ -634,6 +637,49 @@
     </div>
   </div>
 
+  <!-- 말뭉치 원본 폴더 구조 계층 트리 및 체크박스 다중 선택 모달 -->
+  <div id="modal-doc-selector" class="modal-overlay" style="display:none;">
+    <div class="modal-card doc-selector-modal-box">
+      <div class="modal-header">
+        <h3 class="modal-title" style="display:flex; align-items:center; gap:8px;">
+          <span>📁 말뭉치 문서 선택 (원본 폴더 구조 계층 트리)</span>
+        </h3>
+        <button type="button" class="modal-close" id="btn-close-doc-selector">✕</button>
+      </div>
+
+      <!-- 툴바: 일괄 선택/해제, 검색 필터 -->
+      <div class="doc-selector-toolbar">
+        <div class="doc-toolbar-left">
+          <button type="button" class="btn btn-outline btn-xs" id="btn-doc-select-all">☑️ 전체 선택</button>
+          <button type="button" class="btn btn-outline btn-xs" id="btn-doc-deselect-all">⬜ 전체 해제</button>
+          <button type="button" class="btn btn-outline btn-xs" id="btn-doc-expand-all">📂 모두 펼치기</button>
+          <button type="button" class="btn btn-outline btn-xs" id="btn-doc-collapse-all">📁 모두 접기</button>
+        </div>
+        <div class="doc-toolbar-right">
+          <input type="text" id="doc-search-filter" class="doc-filter-input" placeholder="🔍 파일명/문서명 실시간 필터..." autocomplete="off" />
+        </div>
+      </div>
+
+      <!-- 폴더 트리 본문 컨테이너 -->
+      <div class="doc-tree-container" id="doc-tree-container">
+        <!-- JS로 원본 폴더 구조와 하위 파일 목록 동적 렌더링 -->
+      </div>
+
+      <!-- 모달 푸터 -->
+      <div class="modal-footer" style="justify-content:space-between; align-items:center;">
+        <div id="doc-selection-summary" style="font-size:0.84rem; color:#475569;">
+          선택된 파일: <strong id="doc-selected-count" style="color:#2563eb;">13</strong>개 / 전체 <span id="doc-total-count">13</span>개 (<span id="doc-selected-sentences">0</span>문장)
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button type="button" class="btn btn-outline" id="btn-cancel-doc-selector">닫기</button>
+          <button type="button" class="btn btn-primary" id="btn-apply-doc-selector" style="font-weight:700;">
+            ✓ 선택한 파일로 검색 적용
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- 원본 파일 점프 뷰어 모달 (Source Jump Modal) -->
   <div id="modal-source-jump" class="modal-overlay" style="display:none;">
     <div class="modal-card">
@@ -658,7 +704,7 @@
     </div>
   </div>
 
-  <script src="/hangul_automata.js?v=2"></script>
-  <script src="/app.js?v=2"></script>
+  <script src="/hangul_automata.js?v=3"></script>
+  <script src="/app.js?v=3"></script>
 </body>
 </html>

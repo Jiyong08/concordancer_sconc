@@ -28,11 +28,36 @@ let isSearchInProgress = false;
   const selectLimit = document.getElementById('select-limit');
   const selectCorpusFont = document.getElementById('select-corpus-font');
 
-  // Search Options Collapsible Bar
+  // Search Options Collapsible Bar (상단 카드 헤더 + 검색창 줄 인라인 버튼)
   const btnToggleSearchOptions = document.getElementById('btn-toggle-search-options');
+  const btnToggleOptionsInline = document.getElementById('btn-toggle-options-inline');
   const searchOptionsBar = document.getElementById('search-options-bar');
   const foldIcon = document.getElementById('fold-icon');
   const foldText = document.getElementById('fold-text');
+  const inlineFoldIcon = document.getElementById('inline-fold-icon');
+  const inlineFoldText = document.getElementById('inline-fold-text');
+
+  // Corpus Document Selector Elements
+  const btnOpenDocSelector = document.getElementById('btn-open-doc-selector');
+  const docSelectorLabel = document.getElementById('doc-selector-label');
+  const modalDocSelector = document.getElementById('modal-doc-selector');
+  const btnCloseDocSelector = document.getElementById('btn-close-doc-selector');
+  const btnCancelDocSelector = document.getElementById('btn-cancel-doc-selector');
+  const btnApplyDocSelector = document.getElementById('btn-apply-doc-selector');
+  const btnDocSelectAll = document.getElementById('btn-doc-select-all');
+  const btnDocDeselectAll = document.getElementById('btn-doc-deselect-all');
+  const btnDocExpandAll = document.getElementById('btn-doc-expand-all');
+  const btnDocCollapseAll = document.getElementById('btn-doc-collapse-all');
+  const docSearchFilter = document.getElementById('doc-search-filter');
+  const docTreeContainer = document.getElementById('doc-tree-container');
+  const docSelectedCount = document.getElementById('doc-selected-count');
+  const docTotalCount = document.getElementById('doc-total-count');
+  const docSelectedSentences = document.getElementById('doc-selected-sentences');
+
+  let globalDocuments = [];
+  let globalSourceFiles = [];
+  let selectedDocIds = new Set(['ALL']); // 기본값: 전체 문서
+  let tempSelectedDocIds = new Set();
 
   const kwicTbody = document.getElementById('kwic-tbody');
   const kwicResultTitle = document.getElementById('kwic-result-title');
@@ -322,7 +347,8 @@ let isSearchInProgress = false;
       searchInput.value = q;
       selectMode.value = mode;
       selectLayer.value = layer;
-      selectDoc.value = 'ALL';
+      selectedDocIds = new Set(['ALL']);
+      updateDocSelectorTriggerLabel();
       updateKbStatus();
       runSearch();
     });
@@ -370,13 +396,9 @@ let isSearchInProgress = false;
       const memBadge = document.getElementById('badge-memory-tier');
       memBadge.innerHTML = `⚡ <strong>${escapeHtml(mem.tier_label)}</strong> (RAM ${mem.total_ram_gb}GB)`;
 
-      selectDoc.innerHTML = '<option value="ALL">전체 문서 (13종)</option>';
-      data.documents.forEach((d) => {
-        const opt = document.createElement('option');
-        opt.value = d.doc_id;
-        opt.textContent = `[${d.doc_id}] ${d.title} (${d.sentence_count.toLocaleString()}문장)`;
-        selectDoc.appendChild(opt);
-      });
+      globalDocuments = data.documents || [];
+      globalSourceFiles = data.source_files || [];
+      updateDocSelectorTriggerLabel();
 
       const mapTbody = document.getElementById('mapping-tbody');
       mapTbody.innerHTML = data.source_files
@@ -431,7 +453,8 @@ let isSearchInProgress = false;
           document.querySelector('.nav-tab[data-tab="tab-search"]').click();
           searchInput.value = '';
           automata.reset();
-          selectDoc.value = docId;
+          selectedDocIds = new Set([docId]);
+          updateDocSelectorTriggerLabel();
           selectLayer.value = 'ALL';
           selectMode.value = 'all';
           runSearch();
@@ -449,6 +472,359 @@ let isSearchInProgress = false;
       console.error('Overview load error:', err);
     }
   }
+
+  // ========================================================
+  // Corpus Document Selector & Folder Tree Logic
+  // ========================================================
+  function getDocSelectionSummaryLabel() {
+    const isAll = selectedDocIds.has('ALL') || selectedDocIds.size === globalDocuments.length || selectedDocIds.size === 0;
+    if (isAll) {
+      return `전체 문서 (${globalDocuments.length || 13}개)`;
+    }
+    if (selectedDocIds.size === 1) {
+      const singleId = Array.from(selectedDocIds)[0];
+      const doc = globalDocuments.find((d) => d.doc_id === singleId);
+      return doc ? doc.title : `문서 [${singleId}]`;
+    }
+    return `${selectedDocIds.size}개 문서 선택됨`;
+  }
+
+  function updateDocSelectorTriggerLabel() {
+    if (!docSelectorLabel) return;
+    const isAll = selectedDocIds.has('ALL') || selectedDocIds.size === globalDocuments.length || selectedDocIds.size === 0;
+    if (isAll) {
+      docSelectorLabel.textContent = `📂 전체 문서 (${globalDocuments.length || 13}개 파일)`;
+      docSelectorLabel.style.color = '#1e293b';
+    } else {
+      docSelectorLabel.textContent = `📂 ${selectedDocIds.size}개 파일 선택됨`;
+      docSelectorLabel.style.color = '#2563eb';
+    }
+  }
+
+  function buildFolderTreeData() {
+    // Group files/docs by their directory path in rel_path
+    const folderMap = new Map(); // folderName -> Array<{ doc, sourceFile }>
+
+    globalDocuments.forEach((doc) => {
+      // Find matching source_files for this doc
+      const matchedFiles = globalSourceFiles.filter((sf) => sf.linked_doc_id === doc.doc_id);
+      if (matchedFiles.length === 0) {
+        // Fallback: use doc's source_files_list or category
+        const relPath = doc.source_files_list || doc.title;
+        const parts = relPath.replace(/\\/g, '/').split('/');
+        const folderName = parts.length > 1 ? parts.slice(0, -1).join('/') : (doc.corpus_category || '기본 말뭉치');
+        const fileName = parts[parts.length - 1];
+
+        if (!folderMap.has(folderName)) folderMap.set(folderName, []);
+        folderMap.get(folderName).push({
+          doc,
+          sourceFile: {
+            file_id: doc.doc_id,
+            file_name: fileName,
+            rel_path: relPath,
+            corpus_type: doc.corpus_category,
+            file_size_bytes: 0,
+          },
+        });
+      } else {
+        matchedFiles.forEach((sf) => {
+          const cleanRel = (sf.rel_path || sf.file_name).replace(/\\/g, '/');
+          const parts = cleanRel.split('/');
+          const folderName = parts.length > 1 ? parts.slice(0, -1).join('/') : (sf.corpus_type || doc.corpus_category || '기본 말뭉치');
+          
+          if (!folderMap.has(folderName)) folderMap.set(folderName, []);
+          folderMap.get(folderName).push({
+            doc,
+            sourceFile: sf,
+          });
+        });
+      }
+    });
+
+    return folderMap;
+  }
+
+  function renderDocTree(filterText = '') {
+    if (!docTreeContainer) return;
+    const folderMap = buildFolderTreeData();
+    const filter = (filterText || '').trim().toLowerCase();
+
+    let html = '';
+    let totalFilesCount = 0;
+    let selectedSentencesSum = 0;
+
+    folderMap.forEach((items, folderName) => {
+      const filteredItems = items.filter((item) => {
+        if (!filter) return true;
+        const txt = `${item.sourceFile.file_name} ${item.sourceFile.rel_path} ${item.doc.title} ${item.doc.corpus_category}`.toLowerCase();
+        return txt.includes(filter);
+      });
+
+      if (filteredItems.length === 0) return;
+
+      totalFilesCount += filteredItems.length;
+
+      // Check folder selection state
+      let checkedInFolder = 0;
+      filteredItems.forEach((item) => {
+        if (tempSelectedDocIds.has(item.doc.doc_id)) {
+          checkedInFolder++;
+        }
+      });
+      const allChecked = checkedInFolder === filteredItems.length;
+      const someChecked = checkedInFolder > 0 && !allChecked;
+
+      html += `
+        <div class="doc-folder-group" data-folder="${escapeHtml(folderName)}">
+          <div class="doc-folder-header">
+            <div class="doc-folder-title-wrap">
+              <span class="doc-folder-arrow">▼</span>
+              <input type="checkbox" class="doc-folder-chk" data-folder="${escapeHtml(folderName)}" ${allChecked ? 'checked' : ''} ${someChecked ? 'data-indeterminate="true"' : ''} />
+              <span style="font-size:0.92rem;">📁 <strong>${escapeHtml(folderName)}</strong></span>
+            </div>
+            <div class="doc-folder-stats">
+              하위 파일 ${filteredItems.length}개
+            </div>
+          </div>
+          <div class="doc-file-list">
+      `;
+
+      filteredItems.forEach((item) => {
+        const isSelected = tempSelectedDocIds.has(item.doc.doc_id);
+        if (isSelected) {
+          selectedSentencesSum += item.doc.sentence_count || 0;
+        }
+
+        const badges = [];
+        if (item.doc.corpus_category && item.doc.corpus_category.includes('옛한글')) {
+          badges.push('<span class="layer-badge badge-old" style="font-size:0.68rem; padding:1px 5px;">옛한글</span>');
+        }
+        if (item.doc.annotation_layers && item.doc.annotation_layers.includes('형태')) {
+          badges.push('<span class="layer-badge badge-morph" style="font-size:0.68rem; padding:1px 5px;">형태</span>');
+        }
+        if (item.doc.annotation_layers && item.doc.annotation_layers.includes('3중')) {
+          badges.push('<span class="layer-badge badge-syntax" style="font-size:0.68rem; padding:1px 5px;">3중연동</span>');
+        }
+
+        html += `
+          <div class="doc-file-item ${isSelected ? 'selected' : ''}" data-doc-id="${escapeHtml(item.doc.doc_id)}">
+            <div class="doc-file-info">
+              <input type="checkbox" class="doc-file-chk" data-doc-id="${escapeHtml(item.doc.doc_id)}" data-folder="${escapeHtml(folderName)}" ${isSelected ? 'checked' : ''} />
+              <span class="doc-file-name">${escapeHtml(item.sourceFile.file_name)}</span>
+              <span class="doc-file-title" title="${escapeHtml(item.doc.title)}">${escapeHtml(item.doc.title)}</span>
+              ${badges.join('')}
+            </div>
+            <div class="doc-file-meta">
+              <span>${(item.doc.sentence_count || 0).toLocaleString()}문장</span>
+              <span>·</span>
+              <span>${(item.doc.eojeol_count || 0).toLocaleString()}어절</span>
+            </div>
+          </div>
+        `;
+      });
+
+      html += `
+          </div>
+        </div>
+      `;
+    });
+
+    if (totalFilesCount === 0) {
+      docTreeContainer.innerHTML = '<div style="text-align:center; padding:30px; color:#64748b;">일치하는 문서나 파일이 없습니다.</div>';
+    } else {
+      docTreeContainer.innerHTML = html;
+    }
+
+    // Set indeterminate properties
+    docTreeContainer.querySelectorAll('.doc-folder-chk[data-indeterminate="true"]').forEach((chk) => {
+      chk.indeterminate = true;
+    });
+
+    // Update bottom counters
+    updateDocModalCounters(selectedSentencesSum);
+
+    // Bind event handlers
+    attachDocTreeEvents();
+  }
+
+  function updateDocModalCounters(sentencesSum = null) {
+    if (!docSelectedCount || !docTotalCount) return;
+    const totalDocs = globalDocuments.length;
+    let selectedDocsCount = 0;
+    let sSum = 0;
+
+    globalDocuments.forEach((d) => {
+      if (tempSelectedDocIds.has(d.doc_id)) {
+        selectedDocsCount++;
+        sSum += d.sentence_count || 0;
+      }
+    });
+
+    docSelectedCount.textContent = selectedDocsCount;
+    docTotalCount.textContent = totalDocs;
+    if (docSelectedSentences) {
+      docSelectedSentences.textContent = (sentencesSum !== null ? sentencesSum : sSum).toLocaleString();
+    }
+  }
+
+  function attachDocTreeEvents() {
+    // 1. Folder collapse/expand arrow & header click
+    docTreeContainer.querySelectorAll('.doc-folder-header').forEach((hdr) => {
+      hdr.addEventListener('click', (e) => {
+        if (e.target.classList.contains('doc-folder-chk')) return; // ignore checkbox click
+        const group = hdr.closest('.doc-folder-group');
+        const arrow = hdr.querySelector('.doc-folder-arrow');
+        const list = group.querySelector('.doc-file-list');
+        list.classList.toggle('collapsed');
+        arrow.classList.toggle('collapsed');
+      });
+    });
+
+    // 2. Folder checkbox change (select/deselect all children)
+    docTreeContainer.querySelectorAll('.doc-folder-chk').forEach((chk) => {
+      chk.addEventListener('change', (e) => {
+        const isChecked = e.target.checked;
+        const group = chk.closest('.doc-folder-group');
+        group.querySelectorAll('.doc-file-chk').forEach((fChk) => {
+          fChk.checked = isChecked;
+          const docId = fChk.dataset.docId;
+          if (isChecked) {
+            tempSelectedDocIds.add(docId);
+          } else {
+            tempSelectedDocIds.delete(docId);
+          }
+          const itemEl = fChk.closest('.doc-file-item');
+          if (itemEl) itemEl.classList.toggle('selected', isChecked);
+        });
+        chk.indeterminate = false;
+        updateDocModalCounters();
+      });
+    });
+
+    // 3. File checkbox change
+    docTreeContainer.querySelectorAll('.doc-file-chk').forEach((chk) => {
+      chk.addEventListener('change', (e) => {
+        const isChecked = e.target.checked;
+        const docId = chk.dataset.docId;
+        const folderName = chk.dataset.folder;
+        if (isChecked) {
+          tempSelectedDocIds.add(docId);
+        } else {
+          tempSelectedDocIds.delete(docId);
+        }
+        const itemEl = chk.closest('.doc-file-item');
+        if (itemEl) itemEl.classList.toggle('selected', isChecked);
+
+        // Update parent folder checkbox
+        const group = chk.closest('.doc-folder-group');
+        if (group) {
+          const folderChk = group.querySelector('.doc-folder-chk');
+          const allFileChks = group.querySelectorAll('.doc-file-chk');
+          const checkedFileChks = group.querySelectorAll('.doc-file-chk:checked');
+          if (checkedFileChks.length === allFileChks.length) {
+            folderChk.checked = true;
+            folderChk.indeterminate = false;
+          } else if (checkedFileChks.length > 0) {
+            folderChk.checked = false;
+            folderChk.indeterminate = true;
+          } else {
+            folderChk.checked = false;
+            folderChk.indeterminate = false;
+          }
+        }
+
+        updateDocModalCounters();
+      });
+    });
+  }
+
+  function openDocSelectorModal() {
+    if (!modalDocSelector) return;
+    // Copy current selectedDocIds to tempSelectedDocIds
+    tempSelectedDocIds = new Set();
+    const isAll = selectedDocIds.has('ALL') || selectedDocIds.size === globalDocuments.length || selectedDocIds.size === 0;
+    if (isAll) {
+      globalDocuments.forEach((d) => tempSelectedDocIds.add(d.doc_id));
+    } else {
+      selectedDocIds.forEach((id) => tempSelectedDocIds.add(id));
+    }
+
+    if (docSearchFilter) docSearchFilter.value = '';
+    renderDocTree();
+    modalDocSelector.style.display = 'flex';
+  }
+
+  function closeDocSelectorModal() {
+    if (modalDocSelector) {
+      modalDocSelector.style.display = 'none';
+    }
+  }
+
+  if (btnOpenDocSelector) {
+    btnOpenDocSelector.addEventListener('click', openDocSelectorModal);
+  }
+  if (btnCloseDocSelector) {
+    btnCloseDocSelector.addEventListener('click', closeDocSelectorModal);
+  }
+  if (btnCancelDocSelector) {
+    btnCancelDocSelector.addEventListener('click', closeDocSelectorModal);
+  }
+  if (modalDocSelector) {
+    modalDocSelector.addEventListener('click', (e) => {
+      if (e.target === modalDocSelector) closeDocSelectorModal();
+    });
+  }
+
+  if (btnDocSelectAll) {
+    btnDocSelectAll.addEventListener('click', () => {
+      globalDocuments.forEach((d) => tempSelectedDocIds.add(d.doc_id));
+      renderDocTree(docSearchFilter ? docSearchFilter.value : '');
+    });
+  }
+
+  if (btnDocDeselectAll) {
+    btnDocDeselectAll.addEventListener('click', () => {
+      tempSelectedDocIds.clear();
+      renderDocTree(docSearchFilter ? docSearchFilter.value : '');
+    });
+  }
+
+  if (btnDocExpandAll) {
+    btnDocExpandAll.addEventListener('click', () => {
+      docTreeContainer.querySelectorAll('.doc-file-list').forEach((l) => l.classList.remove('collapsed'));
+      docTreeContainer.querySelectorAll('.doc-folder-arrow').forEach((a) => a.classList.remove('collapsed'));
+    });
+  }
+
+  if (btnDocCollapseAll) {
+    btnDocCollapseAll.addEventListener('click', () => {
+      docTreeContainer.querySelectorAll('.doc-file-list').forEach((l) => l.classList.add('collapsed'));
+      docTreeContainer.querySelectorAll('.doc-folder-arrow').forEach((a) => a.classList.add('collapsed'));
+    });
+  }
+
+  if (docSearchFilter) {
+    docSearchFilter.addEventListener('input', (e) => {
+      renderDocTree(e.target.value);
+    });
+  }
+
+  if (btnApplyDocSelector) {
+    btnApplyDocSelector.addEventListener('click', () => {
+      if (tempSelectedDocIds.size === 0) {
+        alert('최소 1개 이상의 문서를 선택해 주세요.');
+        return;
+      }
+      if (tempSelectedDocIds.size === globalDocuments.length) {
+        selectedDocIds = new Set(['ALL']);
+      } else {
+        selectedDocIds = new Set(tempSelectedDocIds);
+      }
+      updateDocSelectorTriggerLabel();
+      closeDocSelectorModal();
+    });
+  }
+
 
   // Multi-Tab Management (최대 10개 탭 전환 및 비교)
   function renderTabsBar() {
@@ -508,7 +884,14 @@ let isSearchInProgress = false;
     automata.feedRawText(tab.query);
     selectMode.value = tab.mode;
     selectLayer.value = tab.layer;
-    selectDoc.value = tab.docId;
+    if (tab.docIds) {
+      selectedDocIds = new Set(tab.docIds);
+    } else if (tab.docId && tab.docId !== 'ALL') {
+      selectedDocIds = new Set([tab.docId]);
+    } else {
+      selectedDocIds = new Set(['ALL']);
+    }
+    updateDocSelectorTriggerLabel();
     selectContextWords.value = tab.contextWords;
     selectLimit.value = tab.limit;
     subsearchInput.value = tab.subsearchQuery || '';
@@ -577,9 +960,16 @@ let isSearchInProgress = false;
 
     const data = tab.data;
     const ctxLabel = tab.contextWords === '999' ? '문장 전체' : `좌우 ${tab.contextWords}어절`;
+    let docLabel = '전체 문서';
+    if (tab.docIds && !tab.docIds.has('ALL') && tab.docIds.size > 0) {
+      docLabel = tab.docIds.size === 1 ? Array.from(tab.docIds)[0] : `${tab.docIds.size}개 문서`;
+    } else if (tab.docId && tab.docId !== 'ALL') {
+      docLabel = tab.docId;
+    }
+
     kwicResultTitle.textContent = tab.query
-      ? `용례 검색 결과: "${tab.query}" (${ctxLabel})`
-      : `문서 열람 (${tab.docId !== 'ALL' ? tab.docId : tab.layer} · ${ctxLabel})`;
+      ? `용례 검색 결과: "${tab.query}" [${docLabel}] (${ctxLabel})`
+      : `문서 열람 (${docLabel} · ${ctxLabel})`;
 
     const cancelNote = data.cancelled
       ? ' · <strong style="color:#dc2626;">[중단됨: 부분 결과]</strong>'
@@ -924,17 +1314,32 @@ let isSearchInProgress = false;
     });
   }
 
-  // Search Options Bar Fold/Unfold Toggle
-  if (btnToggleSearchOptions && searchOptionsBar) {
+  // Search Options Bar Fold/Unfold Toggle (상단 헤더 + 검색창 줄 인라인 버튼 양방향 동기화)
+  if (searchOptionsBar) {
     const applySearchOptionsFold = (collapsed) => {
       if (collapsed) {
         searchOptionsBar.classList.add('collapsed');
         if (foldIcon) foldIcon.textContent = '🔽';
         if (foldText) foldText.textContent = '검색창 상단 옵션 펼치기';
+        if (inlineFoldIcon) inlineFoldIcon.textContent = '🔽';
+        if (inlineFoldText) inlineFoldText.textContent = '검색옵션 펼치기';
       } else {
         searchOptionsBar.classList.remove('collapsed');
         if (foldIcon) foldIcon.textContent = '🔼';
         if (foldText) foldText.textContent = '검색창 상단 옵션 접기';
+        if (inlineFoldIcon) inlineFoldIcon.textContent = '🔼';
+        if (inlineFoldText) inlineFoldText.textContent = '검색옵션 접기';
+      }
+    };
+
+    const toggleFold = () => {
+      const isCurrentlyCollapsed = searchOptionsBar.classList.contains('collapsed');
+      const nextCollapsed = !isCurrentlyCollapsed;
+      applySearchOptionsFold(nextCollapsed);
+      if (nextCollapsed) {
+        localStorage.setItem('sconc_search_options_collapsed', '1');
+      } else {
+        localStorage.removeItem('sconc_search_options_collapsed');
       }
     };
 
@@ -944,16 +1349,12 @@ let isSearchInProgress = false;
       applySearchOptionsFold(true);
     }
 
-    btnToggleSearchOptions.addEventListener('click', () => {
-      const isCurrentlyCollapsed = searchOptionsBar.classList.contains('collapsed');
-      const nextCollapsed = !isCurrentlyCollapsed;
-      applySearchOptionsFold(nextCollapsed);
-      if (nextCollapsed) {
-        localStorage.setItem('sconc_search_options_collapsed', '1');
-      } else {
-        localStorage.removeItem('sconc_search_options_collapsed');
-      }
-    });
+    if (btnToggleSearchOptions) {
+      btnToggleSearchOptions.addEventListener('click', toggleFold);
+    }
+    if (btnToggleOptionsInline) {
+      btnToggleOptionsInline.addEventListener('click', toggleFold);
+    }
   }
 
   // 2. Folder-based DB Builder
@@ -1020,20 +1421,23 @@ let isSearchInProgress = false;
     document.querySelector('.nav-tab[data-tab="tab-search"]').click();
     searchInput.value = '';
     automata.reset();
-    selectDoc.value = 'ALL';
+    selectedDocIds = new Set(['ALL']);
+    updateDocSelectorTriggerLabel();
     runSearch();
   });
 
   async function runSearch() {
-    // 1. 선행 파라미터 안전 조회 (TDZ 방지)
+    // 1. 선행 파라미터 안전 조회 (TDZ 방지 & 다중 문서 선택 지원)
     const q = searchInput.value;
     const mode = selectMode.value;
     const layer = selectLayer.value;
-    const docId = selectDoc.value;
+    const isAllDocs = selectedDocIds.has('ALL') || selectedDocIds.size === globalDocuments.length || selectedDocIds.size === 0;
+    const docIdsParam = isAllDocs ? 'ALL' : Array.from(selectedDocIds).join(',');
+    const docId = isAllDocs ? 'ALL' : (selectedDocIds.size === 1 ? Array.from(selectedDocIds)[0] : 'MULTI');
     const contextWords = selectContextWords.value;
     const limit = selectLimit.value;
 
-    if (!q.trim() && docId === 'ALL') {
+    if (!q.trim() && isAllDocs) {
       kwicResultMeta.innerHTML = '<span style="color:#64748b;">검색어를 입력하거나 특정 문서를 선택해 주세요.</span>';
       return;
     }
@@ -1066,6 +1470,7 @@ let isSearchInProgress = false;
       mode,
       layer_filter: layer,
       doc_id: docId,
+      doc_ids: docIdsParam,
       context_words: contextWords,
       limit,
     });
@@ -1095,7 +1500,7 @@ let isSearchInProgress = false;
       }
 
       // Multi-Tab management: Add new tab (up to 10 tabs)
-      const tabTitle = q || (docId !== 'ALL' ? docId : '전체 열람');
+      const tabTitle = q || getDocSelectionSummaryLabel();
       // If active tab exists and had empty query and no results, reuse it; else add new tab
       let targetTab = null;
       if (searchTabs.length > 0 && activeTabId) {
@@ -1111,6 +1516,7 @@ let isSearchInProgress = false;
         targetTab.mode = mode;
         targetTab.layer = layer;
         targetTab.docId = docId;
+        targetTab.docIds = new Set(selectedDocIds);
         targetTab.contextWords = contextWords;
         targetTab.limit = limit;
         targetTab.data = data;
@@ -1127,6 +1533,7 @@ let isSearchInProgress = false;
           mode,
           layer,
           docId,
+          docIds: new Set(selectedDocIds),
           contextWords,
           limit,
           data,
