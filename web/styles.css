@@ -1534,3 +1534,45 @@ html, body {
   color: #64748b;
   flex-shrink: 0;
 }
+
+/* ========================================================
+   Full Top Collapse Mode (sconc v0.1 Header + Nav Tabs + Options Bar)
+   ======================================================== */
+.app-shell.top-collapsed .app-header {
+  display: none !important;
+}
+
+.app-shell.top-collapsed .nav-tabs {
+  display: none !important;
+}
+
+.app-shell.top-collapsed .search-card-header {
+  display: none !important;
+}
+
+.app-shell.top-collapsed .search-options-bar {
+  display: none !important;
+}
+
+.app-shell.top-collapsed .main-container {
+  padding-top: 4px !important;
+}
+
+.app-shell.top-collapsed .search-card {
+  margin-top: 2px !important;
+  margin-bottom: 6px !important;
+  padding: 6px 12px !important;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+.btn-toggle-options-inline.active {
+  background-color: #2563eb !important;
+  border-color: #1d4ed8 !important;
+  color: #ffffff !important;
+}
+
+.btn-toggle-options-inline.active:hover {
+  background-color: #1d4ed8 !important;
+  border-color: #1e40af !important;
+  color: #ffffff !important;
+}

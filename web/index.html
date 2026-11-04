@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>sconc v0.1 — 한국어 통시·공시 다층 말뭉치 통합 검색기</title>
-  <link rel="stylesheet" href="/styles.css?v=3" />
+  <link rel="stylesheet" href="/styles.css?v=4" />
 </head>
 <body>
   <div class="app-shell ratio-full" id="app-shell">
@@ -61,12 +61,9 @@
       <!-- TAB 1: SEARCH & COLLAPSIBLE MULTI-LAYER INSPECTOR -->
       <section id="tab-search" class="tab-panel active">
         <div class="search-card">
-          <!-- 검색창 상단 접기/펼치기 제어 헤더 -->
+          <!-- 검색창 상단 카드 헤더 -->
           <div class="search-card-header">
             <span class="search-card-title">🔍 말뭉치 검색 조건 및 필터 설정</span>
-            <button type="button" class="btn-fold-link" id="btn-toggle-search-options" title="검색 옵션(검색방식·필터·문서지정 등)을 접거나 펼쳐 화면 공간을 확보합니다.">
-              <span id="fold-icon">🔼</span> <span id="fold-text">검색창 상단 옵션 접기</span>
-            </button>
           </div>
 
           <!-- 윗줄 (Row 1): 가로 한 줄 검색 옵션 바 -->
@@ -164,8 +161,8 @@
             <button class="btn btn-outline" id="btn-clear-input" type="button">
               ✕ 지우기
             </button>
-            <button class="btn btn-outline btn-toggle-options-inline" id="btn-toggle-options-inline" type="button" title="검색창 상단의 옵션 바(검색방식, 필터, 문서지정 등)를 접거나 펼쳐 화면 공간을 넓힙니다.">
-              <span id="inline-fold-icon">🔼</span> <span id="inline-fold-text">검색옵션 접기</span>
+            <button class="btn btn-outline btn-toggle-options-inline" id="btn-toggle-options-inline" type="button" title="맨 위의 sconc v0.1 헤더와 검색 옵션을 모두 접거나 펼쳐 검색 결과 화면을 최대화합니다.">
+              <span id="inline-fold-icon">🔼</span> <span id="inline-fold-text">검색 옵션 접기</span>
             </button>
           </div>
 
@@ -704,7 +701,7 @@
     </div>
   </div>
 
-  <script src="/hangul_automata.js?v=3"></script>
-  <script src="/app.js?v=3"></script>
+  <script src="/hangul_automata.js?v=4"></script>
+  <script src="/app.js?v=4"></script>
 </body>
 </html>

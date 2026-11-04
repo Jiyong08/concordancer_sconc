@@ -1314,47 +1314,52 @@ let isSearchInProgress = false;
     });
   }
 
-  // Search Options Bar Fold/Unfold Toggle (상단 헤더 + 검색창 줄 인라인 버튼 양방향 동기화)
-  if (searchOptionsBar) {
-    const applySearchOptionsFold = (collapsed) => {
-      if (collapsed) {
-        searchOptionsBar.classList.add('collapsed');
-        if (foldIcon) foldIcon.textContent = '🔽';
-        if (foldText) foldText.textContent = '검색창 상단 옵션 펼치기';
-        if (inlineFoldIcon) inlineFoldIcon.textContent = '🔽';
-        if (inlineFoldText) inlineFoldText.textContent = '검색옵션 펼치기';
-      } else {
-        searchOptionsBar.classList.remove('collapsed');
-        if (foldIcon) foldIcon.textContent = '🔼';
-        if (foldText) foldText.textContent = '검색창 상단 옵션 접기';
-        if (inlineFoldIcon) inlineFoldIcon.textContent = '🔼';
-        if (inlineFoldText) inlineFoldText.textContent = '검색옵션 접기';
+  // ========================================================
+  // Full Top Collapse (맨위 sconc v0.1 헤더 + 탭 + 검색 옵션 바 일괄 접기/펼치기)
+  // 검색창 가장 우측 버튼(#btn-toggle-options-inline) 하나로 통합 제어
+  // ========================================================
+  const applyTopCollapse = (collapsed) => {
+    if (!appShell) return;
+    if (collapsed) {
+      appShell.classList.add('top-collapsed');
+      if (searchOptionsBar) searchOptionsBar.classList.add('collapsed');
+      if (inlineFoldIcon) inlineFoldIcon.textContent = '🔽';
+      if (inlineFoldText) inlineFoldText.textContent = '검색 옵션 펼치기';
+      if (btnToggleOptionsInline) {
+        btnToggleOptionsInline.classList.add('active');
+        btnToggleOptionsInline.title = '맨 위의 sconc v0.1 헤더와 검색 옵션을 다시 펼칩니다.';
       }
-    };
-
-    const toggleFold = () => {
-      const isCurrentlyCollapsed = searchOptionsBar.classList.contains('collapsed');
-      const nextCollapsed = !isCurrentlyCollapsed;
-      applySearchOptionsFold(nextCollapsed);
-      if (nextCollapsed) {
-        localStorage.setItem('sconc_search_options_collapsed', '1');
-      } else {
-        localStorage.removeItem('sconc_search_options_collapsed');
+    } else {
+      appShell.classList.remove('top-collapsed');
+      if (searchOptionsBar) searchOptionsBar.classList.remove('collapsed');
+      if (inlineFoldIcon) inlineFoldIcon.textContent = '🔼';
+      if (inlineFoldText) inlineFoldText.textContent = '검색 옵션 접기';
+      if (btnToggleOptionsInline) {
+        btnToggleOptionsInline.classList.remove('active');
+        btnToggleOptionsInline.title = '맨 위의 sconc v0.1 헤더와 검색 옵션을 모두 접어 화면을 최대화합니다.';
       }
-    };
+    }
+  };
 
-    // Restore saved state from localStorage
-    const savedCollapsed = localStorage.getItem('sconc_search_options_collapsed') === '1';
-    if (savedCollapsed) {
-      applySearchOptionsFold(true);
+  const toggleTopCollapse = () => {
+    if (!appShell) return;
+    const isCurrentlyCollapsed = appShell.classList.contains('top-collapsed');
+    const nextCollapsed = !isCurrentlyCollapsed;
+    applyTopCollapse(nextCollapsed);
+    if (nextCollapsed) {
+      localStorage.setItem('sconc_top_collapsed', '1');
+    } else {
+      localStorage.removeItem('sconc_top_collapsed');
     }
+  };
 
-    if (btnToggleSearchOptions) {
-      btnToggleSearchOptions.addEventListener('click', toggleFold);
-    }
-    if (btnToggleOptionsInline) {
-      btnToggleOptionsInline.addEventListener('click', toggleFold);
-    }
+  if (btnToggleOptionsInline) {
+    btnToggleOptionsInline.addEventListener('click', toggleTopCollapse);
+  }
+
+  // Restore saved state from localStorage
+  if (localStorage.getItem('sconc_top_collapsed') === '1') {
+    applyTopCollapse(true);
   }
 
   // 2. Folder-based DB Builder
