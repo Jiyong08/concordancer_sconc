@@ -68,12 +68,20 @@
 
           <!-- 윗줄 (Row 1): 가로 한 줄 검색 옵션 바 -->
           <div class="search-options-bar" id="search-options-bar">
-            <!-- 1. 문서선택 (가장 왼쪽) -->
+            <!-- 1. 문서지정 (가장 왼쪽) -->
             <div class="opt-pill">
-              <label for="btn-open-doc-selector">문서선택</label>
-              <button type="button" class="btn-doc-selector-trigger" id="btn-open-doc-selector" title="원본 말뭉치가 저장된 폴더 및 하위 파일 구조를 트리 형태로 확인하고, 검색할 파일들을 체크박스로 다중 선택합니다.">
+              <label for="btn-open-doc-selector">문서지정</label>
+              <button type="button" class="btn-doc-selector-trigger" id="btn-open-doc-selector" title="원본 말뭉치가 저장된 폴더 및 하위 파일 구조를 트리 형태로 확인하고, 검색할 파일들을 체크박스로 다중 선택하거나 문서 묶음을 만듭니다.">
                 <span id="doc-selector-label">📂 전체 문서</span> ▾
               </button>
+            </div>
+
+            <!-- 1-2. 사용자말뭉치 (문서 묶음) -->
+            <div class="opt-pill" id="opt-user-corpus-pill">
+              <label for="select-user-corpus">사용자말뭉치</label>
+              <select id="select-user-corpus" title="사용자가 '문서 묶음'을 통해 만든 말뭉치 목록입니다. 선택 시 해당 묶음의 문서들만 자동으로 검색 대상이 됩니다.">
+                <option value="">(전체 문서 / 미지정)</option>
+              </select>
             </div>
 
             <!-- 2. 검색방식 -->
@@ -767,13 +775,23 @@
         <button type="button" class="modal-close" id="btn-close-doc-selector">✕</button>
       </div>
 
-      <!-- 툴바: 일괄 선택/해제, 검색 필터 -->
+      <!-- 툴바: 일괄 선택/해제, 문서 묶음 관리, 검색 필터 -->
       <div class="doc-selector-toolbar">
         <div class="doc-toolbar-left">
           <button type="button" class="btn btn-outline btn-xs" id="btn-doc-select-all">☑️ 전체 선택</button>
           <button type="button" class="btn btn-outline btn-xs" id="btn-doc-deselect-all">⬜ 전체 해제</button>
           <button type="button" class="btn btn-outline btn-xs" id="btn-doc-expand-all">📂 모두 펼치기</button>
           <button type="button" class="btn btn-outline btn-xs" id="btn-doc-collapse-all">📁 모두 접기</button>
+          <button type="button" class="btn btn-outline btn-xs" id="btn-create-doc-bundle" style="background:#f0fdf4; color:#15803d; border-color:#86efac; font-weight:700;" title="현재 체크박스로 선택된 문서들을 하나의 '사용자말뭉치' 묶음으로 저장합니다.">
+            📦 문서 묶음 만들기
+          </button>
+          <div style="display:inline-flex; align-items:center; gap:4px; margin-left:4px; border-left:1px solid #cbd5e1; padding-left:6px;">
+            <label for="select-modal-user-bundle" style="font-size:0.75rem; font-weight:700; color:#475569;">📚 사용자말뭉치:</label>
+            <select id="select-modal-user-bundle" style="font-size:0.76rem; border:1px solid #cbd5e1; border-radius:4px; padding:2px 4px; max-width:160px;">
+              <option value="">(불러올 묶음 선택...)</option>
+            </select>
+            <button type="button" class="btn btn-outline btn-xs" id="btn-delete-modal-user-bundle" style="color:#dc2626;" title="선택한 사용자말뭉치 묶음을 삭제합니다.">🗑️ 삭제</button>
+          </div>
         </div>
         <div class="doc-toolbar-right">
           <input type="text" id="doc-search-filter" class="doc-filter-input" placeholder="🔍 파일명/문서명 실시간 필터..." autocomplete="off" />

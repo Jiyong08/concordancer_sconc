@@ -73,6 +73,14 @@ let isSearchInProgress = false;
   const docTotalCount = document.getElementById('doc-total-count');
   const docSelectedSentences = document.getElementById('doc-selected-sentences');
 
+  // User Corpus Bundles Elements
+  const selectUserCorpus = document.getElementById('select-user-corpus');
+  const btnCreateDocBundle = document.getElementById('btn-create-doc-bundle');
+  const selectModalUserBundle = document.getElementById('select-modal-user-bundle');
+  const btnDeleteModalUserBundle = document.getElementById('btn-delete-modal-user-bundle');
+  let activeUserBundleName = null;
+  const STORAGE_KEY_BUNDLES = 'sconc_user_corpus_bundles';
+
   let globalDocuments = [];
   let globalSourceFiles = [];
   let selectedDocIds = new Set(['ALL']); // 기본값: 전체 문서
@@ -422,6 +430,7 @@ let isSearchInProgress = false;
 
       globalDocuments = data.documents || [];
       globalSourceFiles = data.source_files || [];
+      refreshUserCorpusSelects();
       if (selectLayer && selectLayer.options && selectLayer.options.length > 0) {
         selectLayer.options[0].textContent = `전체 말뭉치 (${data.total_sentences.toLocaleString()}문장)`;
       }
@@ -516,8 +525,101 @@ let isSearchInProgress = false;
     return `${selectedDocIds.size}개 문서 선택됨`;
   }
 
+  // =========================================================================
+  // User Corpus Bundles (문서 묶음 & 사용자말뭉치) Management Logic
+  // =========================================================================
+  function getUserCorpusBundles() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY_BUNDLES);
+      return raw ? JSON.parse(raw) : {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function saveUserCorpusBundle(name, docIds) {
+    const bundles = getUserCorpusBundles();
+    bundles[name] = {
+      name: name,
+      docIds: Array.from(docIds),
+      updatedAt: Date.now(),
+    };
+    try {
+      localStorage.setItem(STORAGE_KEY_BUNDLES, JSON.stringify(bundles));
+    } catch (e) {
+      console.error('Failed to save bundle to localStorage:', e);
+    }
+    refreshUserCorpusSelects();
+  }
+
+  function deleteUserCorpusBundle(name) {
+    const bundles = getUserCorpusBundles();
+    if (bundles[name]) {
+      delete bundles[name];
+      try {
+        localStorage.setItem(STORAGE_KEY_BUNDLES, JSON.stringify(bundles));
+      } catch (e) {}
+      if (activeUserBundleName === name) {
+        activeUserBundleName = null;
+        selectedDocIds = new Set(['ALL']);
+        updateDocSelectorTriggerLabel();
+      }
+      refreshUserCorpusSelects();
+    }
+  }
+
+  function refreshUserCorpusSelects() {
+    const bundles = getUserCorpusBundles();
+    const names = Object.keys(bundles);
+
+    // 1. 상단 옵션바 select-user-corpus
+    if (selectUserCorpus) {
+      const currentVal = activeUserBundleName || selectUserCorpus.value;
+      selectUserCorpus.innerHTML = '<option value="">(전체 문서 / 미지정)</option>';
+      names.forEach((name) => {
+        const b = bundles[name];
+        const count = (b.docIds || []).length;
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = `📚 ${name} (${count}개 문서)`;
+        if (name === currentVal) opt.selected = true;
+        selectUserCorpus.appendChild(opt);
+      });
+      if (currentVal && names.includes(currentVal)) {
+        selectUserCorpus.value = currentVal;
+      } else {
+        selectUserCorpus.value = '';
+      }
+    }
+
+    // 2. 모달 내 select-modal-user-bundle
+    if (selectModalUserBundle) {
+      const currentVal = selectModalUserBundle.value;
+      selectModalUserBundle.innerHTML = '<option value="">(불러올 묶음 선택...)</option>';
+      names.forEach((name) => {
+        const b = bundles[name];
+        const count = (b.docIds || []).length;
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = `${name} (${count}개)`;
+        if (name === currentVal) opt.selected = true;
+        selectModalUserBundle.appendChild(opt);
+      });
+      if (currentVal && names.includes(currentVal)) {
+        selectModalUserBundle.value = currentVal;
+      } else {
+        selectModalUserBundle.value = '';
+      }
+    }
+  }
+
   function updateDocSelectorTriggerLabel() {
     if (!docSelectorLabel) return;
+    if (activeUserBundleName) {
+      docSelectorLabel.textContent = `📂 사용자: ${activeUserBundleName} (${selectedDocIds.size}개)`;
+      docSelectorLabel.style.color = '#7c3aed';
+      return;
+    }
     const isAll = selectedDocIds.has('ALL') || selectedDocIds.size === globalDocuments.length || selectedDocIds.size === 0;
     if (isAll) {
       const docCount = globalDocuments.length;
@@ -845,11 +947,94 @@ let isSearchInProgress = false;
       }
       if (tempSelectedDocIds.size === globalDocuments.length) {
         selectedDocIds = new Set(['ALL']);
+        activeUserBundleName = null;
+        if (selectUserCorpus) selectUserCorpus.value = '';
       } else {
         selectedDocIds = new Set(tempSelectedDocIds);
+        // Check if matches an existing bundle
+        const bundles = getUserCorpusBundles();
+        let matchedBundle = null;
+        for (const bName of Object.keys(bundles)) {
+          const bIds = new Set(bundles[bName].docIds || []);
+          if (bIds.size === selectedDocIds.size && Array.from(selectedDocIds).every(id => bIds.has(id))) {
+            matchedBundle = bName;
+            break;
+          }
+        }
+        activeUserBundleName = matchedBundle;
+        if (selectUserCorpus) selectUserCorpus.value = matchedBundle || '';
       }
       updateDocSelectorTriggerLabel();
       closeDocSelectorModal();
+    });
+  }
+
+  // User Corpus Bundle Events
+  if (selectUserCorpus) {
+    selectUserCorpus.addEventListener('change', () => {
+      const val = selectUserCorpus.value;
+      if (!val) {
+        activeUserBundleName = null;
+        selectedDocIds = new Set(['ALL']);
+        updateDocSelectorTriggerLabel();
+      } else {
+        const bundles = getUserCorpusBundles();
+        const b = bundles[val];
+        if (b && b.docIds && b.docIds.length) {
+          activeUserBundleName = val;
+          selectedDocIds = new Set(b.docIds);
+          updateDocSelectorTriggerLabel();
+        }
+      }
+      if (selectModalUserBundle) selectModalUserBundle.value = val || '';
+    });
+  }
+
+  if (btnCreateDocBundle) {
+    btnCreateDocBundle.addEventListener('click', () => {
+      if (tempSelectedDocIds.size === 0) {
+        alert('현재 선택된 문서가 없습니다. 먼저 묶을 문서를 1개 이상 체크해 주세요.');
+        return;
+      }
+      const name = prompt(`현재 선택된 ${tempSelectedDocIds.size}개 문서를 하나의 단위로 묶을 [사용자말뭉치] 이름을 입력하세요:`, '새말뭉치');
+      if (!name || !name.trim()) return;
+      const trimmed = name.trim();
+      saveUserCorpusBundle(trimmed, tempSelectedDocIds);
+      activeUserBundleName = trimmed;
+      refreshUserCorpusSelects();
+      if (selectModalUserBundle) selectModalUserBundle.value = trimmed;
+      if (selectUserCorpus) selectUserCorpus.value = trimmed;
+      alert(`문서 묶음 '${trimmed}' (${tempSelectedDocIds.size}개 문서)이 저장되었습니다!
+이제 상단 [사용자말뭉치] 메뉴에서 언제든지 선택할 수 있습니다.`);
+    });
+  }
+
+  if (selectModalUserBundle) {
+    selectModalUserBundle.addEventListener('change', () => {
+      const val = selectModalUserBundle.value;
+      if (!val) return;
+      const bundles = getUserCorpusBundles();
+      const b = bundles[val];
+      if (b && b.docIds) {
+        tempSelectedDocIds = new Set(b.docIds);
+        renderDocTree(docSearchFilter ? docSearchFilter.value : '');
+        activeUserBundleName = val;
+        if (selectUserCorpus) selectUserCorpus.value = val;
+      }
+    });
+  }
+
+  if (btnDeleteModalUserBundle) {
+    btnDeleteModalUserBundle.addEventListener('click', () => {
+      const val = selectModalUserBundle ? selectModalUserBundle.value : '';
+      if (!val) {
+        alert('삭제할 사용자말뭉치 묶음을 먼저 선택해 주세요.');
+        return;
+      }
+      if (confirm(`사용자말뭉치 묶음 '${val}'을(를) 정말 삭제하시겠습니까?`)) {
+        deleteUserCorpusBundle(val);
+        alert(`'${val}' 묶음이 삭제되었습니다.`);
+      }
     });
   }
 
