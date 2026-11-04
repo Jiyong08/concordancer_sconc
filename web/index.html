@@ -68,17 +68,55 @@
 
           <!-- 윗줄 (Row 1): 가로 한 줄 검색 옵션 바 -->
           <div class="search-options-bar" id="search-options-bar">
-            <div class="opt-pill">
-              <label for="select-mode">검색방식</label>
-              <select id="select-mode">
-                <option value="all">통합(원문·자소·형태·의미·구문)</option>
-                <option value="surface">원문/옛한글 표층</option>
-                <option value="jamo">자소 [초/중/종] · 초성</option>
-                <option value="morph">형태소/품사 (예: 세계/NNG)</option>
-                <option value="sense">형태의미 (예: 세계__02)</option>
-                <option value="syntax">구문표지 (예: NP_SBJ)</option>
-                <option value="regex">정규표현식 (Regex)</option>
-              </select>
+            <div class="opt-pill" style="position:relative;">
+              <label for="btn-search-method-trigger">검색방식</label>
+              <button type="button" class="btn-doc-selector-trigger" id="btn-search-method-trigger" title="검색 대상 층위(원문/형태소/의미/구문)와 연산 방식(텍스트/자소/정규식)을 복합적으로 다중 선택합니다.">
+                <span id="search-method-summary-label">🎯 원문 표층 · 텍스트</span> ▾
+              </button>
+
+              <!-- 복합 검색 방식 드롭다운 팝업 -->
+              <div id="search-method-popup" class="search-method-popup" style="display:none;">
+                <div class="method-popup-header">
+                  <span>🎯 검색 대상 층위 및 연산 방식 다중 선택</span>
+                  <button type="button" class="btn-close-popup" id="btn-close-method-popup">×</button>
+                </div>
+                <div class="method-popup-body">
+                  <div class="method-group">
+                    <div class="method-group-title">
+                      <span>📂 검색 대상 층위 (복합 선택)</span>
+                      <div class="method-quick-btns">
+                        <button type="button" class="btn-xs" id="btn-target-all">전체</button>
+                        <button type="button" class="btn-xs" id="btn-target-surface-only">원문만</button>
+                      </div>
+                    </div>
+                    <div class="method-checkbox-grid">
+                      <label class="method-chk-label"><input type="checkbox" id="chk-target-surface" checked /> 원문 표층</label>
+                      <label class="method-chk-label"><input type="checkbox" id="chk-target-morph" /> 형태소/품사</label>
+                      <label class="method-chk-label"><input type="checkbox" id="chk-target-sense" /> 형태의미</label>
+                      <label class="method-chk-label"><input type="checkbox" id="chk-target-syntax" /> 구문표지</label>
+                    </div>
+                  </div>
+
+                  <div class="method-group" style="margin-top:10px; border-top:1px solid #e2e8f0; padding-top:8px;">
+                    <div class="method-group-title">
+                      <span>⚙️ 검색 연산 방식 (복합 선택)</span>
+                      <div class="method-quick-btns">
+                        <button type="button" class="btn-xs" id="btn-method-text-only">텍스트만</button>
+                        <button type="button" class="btn-xs" id="btn-method-jamo-regex">자소+정규식</button>
+                      </div>
+                    </div>
+                    <div class="method-checkbox-grid">
+                      <label class="method-chk-label"><input type="checkbox" id="chk-method-text" checked /> 기본 텍스트 (음절/어절)</label>
+                      <label class="method-chk-label"><input type="checkbox" id="chk-method-jamo" /> 자소 검색 [0/1/01]</label>
+                      <label class="method-chk-label"><input type="checkbox" id="chk-method-regex" /> 정규표현식 (Regex)</label>
+                    </div>
+                  </div>
+                </div>
+                <div class="method-popup-footer">
+                  <span class="method-tip">💡 자소 검색과 정규식을 동시에 체크하여 복합 질의를 수행할 수 있습니다.</span>
+                  <button type="button" class="btn btn-primary btn-sm" id="btn-apply-search-method">확인</button>
+                </div>
+              </div>
             </div>
 
             <div class="opt-pill">
@@ -407,46 +445,46 @@
           </div>
           <div class="scrollable-card-body">
             <div class="guide-grid">
-              <!-- 1. 자소 대괄호 [초/중/종] 검색 문법 -->
+              <!-- 1. 자소 대괄호 [초/중/종] 검색 문법 (0, 1, 01 및 다층 복합 검색) -->
               <div class="guide-box">
-                <h3>1. 대괄호 자소 검색 문법 (`[초성/중성/종성]` 및 `*`, `?`, `+`)</h3>
+                <h3>1. 대괄호 자소 검색 문법 (`0`, `1`, `01` 슬롯 표기법 및 정규식 결합)</h3>
                 <p style="font-size:0.82rem; margin:0 0 8px 0; color:#334155;">
-                  음절을 대괄호 <code>[ ]</code> 안에 표기하고 초성·중성·종성을 슬래시(<code>/</code>)로 구분하여 검색합니다.
-                  초·중·종성 어느 위치에나 와일드카드 문자 <code>*</code>, <code>?</code>, <code>+</code>를 자유롭게 조합할 수 있습니다.
+                  한글 음절을 대괄호 <code>[초성/중성/종성]</code> 안에 슬래시(<code>/</code>)로 구분하여 검색합니다.<br/>
+                  자소 자리마다 <strong>0</strong>(없음/0개), <strong>1</strong>(임의의 1개 자소), <strong>01</strong>(0개 또는 1개)을 입력하여 정밀하게 검색할 수 있습니다.
                 </p>
                 <table class="guide-table">
                   <thead>
                     <tr>
                       <th style="width:110px;">기호 / 표기</th>
-                      <th>의미 및 매칭 범위</th>
-                      <th style="width:140px;">검색식 예시</th>
+                      <th>의미 및 매칭 규칙</th>
+                      <th style="width:160px;">검색식 예시 및 설명</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr>
-                      <td><code>[초/중/종]</code></td>
-                      <td>초성·중성·종성이 지정한 자소와 일치하는 음절</td>
-                      <td><code>[ㄱ/ㅏ/ㅇ]</code> → <strong>강</strong></td>
+                      <td><code>0</code> (0개)</td>
+                      <td>해당 자리에 자소가 <strong>0개(없음)</strong>인 경우 매칭 (종성에 쓰면 <strong>받침 없는 음절</strong>)</td>
+                      <td><code>[ㄱ/ㅏ/0]</code> → <strong>가</strong> ('각, 간' 제외)<br/><code>[1/1/0]</code> → <strong>받침 없는 모든 음절</strong></td>
                     </tr>
                     <tr>
-                      <td><code>*</code> (별표)</td>
-                      <td>0개 이상의 모든 자소 허용 (종성에 쓰면 받침 유무 무관 전체 허용)</td>
-                      <td><code>[ㄱ/*/ㅇ]</code> → <strong>강, 공, 궁, 경, 광…</strong><br/><code>[ㄱ/ㅏ/*]</code> → <strong>가, 각, 간, 강, 값…</strong></td>
+                      <td><code>1</code> (1개)</td>
+                      <td>해당 자리에 자소가 <strong>임의의 1개</strong> 존재하는 경우 매칭 (종성에 쓰면 <strong>받침 있는 음절</strong>)</td>
+                      <td><code>[ㄱ/ㅏ/1]</code> → <strong>각, 간, 갇, 갈, 닭…</strong><br/><code>[1/ㅏ/0]</code> → <strong>가, 나, 다, 라… (무받침 'ㅏ' 음절)</strong><br/><code>[1/1/1]</code> → <strong>받침 있는 모든 음절</strong></td>
                     </tr>
                     <tr>
-                      <td><code>?</code> (물음표)</td>
-                      <td>임의의 자소 1개 매칭 (초·중성에 단독 <code>?</code> 사용 시 모든 초·중성 허용, 합용병서 <code>ㅅ?</code>는 2자 병서 매칭)</td>
-                      <td><code>[?/ㅏ/ㅇ]</code> → <strong>강, 당, 방, 상, 장…</strong><br/><code>[ㄱ/ㅏ/?]</code> → 홑받침(각, 간, 강…)</td>
+                      <td><code>01</code> (0개 또는 1개)</td>
+                      <td>해당 자리에 자소가 <strong>있거나 없거나(0개 또는 1개) 모두 검색</strong></td>
+                      <td><code>[ㄱ/ㅏ/01]</code> → <strong>가, 각, 간, 갈…</strong> ('가' 계열 전체)<br/><code>[ㅎ/ㅏ/0][ㄴ/ㆍ/01]</code> → <strong>하ᄂᆞ, 하ᄂᆞᆯ</strong></td>
                     </tr>
                     <tr>
-                      <td><code>+</code> (더하기)</td>
-                      <td>1개 이상의 자소가 <strong>반드시 존재</strong>해야 함 (종성에 쓰면 <strong>받침이 있는 음절만</strong> 매칭)</td>
-                      <td><code>[ㄱ/ㅏ/+]</code> → <strong>각, 간, 강, 값…</strong> (무받침 '가' 제외)</td>
+                      <td><code>형태소 자소 검색</code></td>
+                      <td>형태소/품사 층위에서도 자소 패턴으로 어근·어간 매칭 가능</td>
+                      <td><code>[1/ㅏ/0]/VV</code> → <strong>가/VV, 사/VV, 차/VV…</strong></td>
                     </tr>
                     <tr>
-                      <td><code>[초/중/]</code></td>
-                      <td>종성 자리를 비우면 <strong>받침이 없는 음절(무받침)</strong>만 매칭</td>
-                      <td><code>[ㅎ/ㅏ/][ㄴ/ㆍ/ㄹ]</code> → <strong>하ᄂᆞᆯ</strong></td>
+                      <td><code>자소 + 정규식 복합</code></td>
+                      <td>자소 검색과 정규표현식을 동시 체크하여 복합 패턴 검색 가능</td>
+                      <td><code>[ㄱ/ㅏ/0].*다/EF</code> → '가'로 시작해 종결어미 '다'로 끝나는 구문</td>
                     </tr>
                   </tbody>
                 </table>

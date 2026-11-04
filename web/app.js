@@ -22,6 +22,25 @@ let isSearchInProgress = false;
   const kbStatus = document.getElementById('kb-automata-status');
 
   const selectMode = document.getElementById('select-mode');
+  const btnSearchMethodTrigger = document.getElementById('btn-search-method-trigger');
+  const searchMethodPopup = document.getElementById('search-method-popup');
+  const btnCloseMethodPopup = document.getElementById('btn-close-method-popup');
+  const btnApplySearchMethod = document.getElementById('btn-apply-search-method');
+  const searchMethodSummaryLabel = document.getElementById('search-method-summary-label');
+
+  const chkTargetSurface = document.getElementById('chk-target-surface');
+  const chkTargetMorph = document.getElementById('chk-target-morph');
+  const chkTargetSense = document.getElementById('chk-target-sense');
+  const chkTargetSyntax = document.getElementById('chk-target-syntax');
+
+  const chkMethodText = document.getElementById('chk-method-text');
+  const chkMethodJamo = document.getElementById('chk-method-jamo');
+  const chkMethodRegex = document.getElementById('chk-method-regex');
+
+  const btnTargetAll = document.getElementById('btn-target-all');
+  const btnTargetSurfaceOnly = document.getElementById('btn-target-surface-only');
+  const btnMethodTextOnly = document.getElementById('btn-method-text-only');
+  const btnMethodJamoRegex = document.getElementById('btn-method-jamo-regex');
   const selectLayer = document.getElementById('select-layer');
   const selectDoc = document.getElementById('select-doc');
   const selectContextWords = document.getElementById('select-context-words');
@@ -1431,10 +1450,122 @@ let isSearchInProgress = false;
     runSearch();
   });
 
+
+  // =========================================================================
+  // Multi-Target & Multi-Method Search Configuration Logic
+  // =========================================================================
+  function getSelectedSearchTargets() {
+    const targets = [];
+    if (chkTargetSurface && chkTargetSurface.checked) targets.push('surface');
+    if (chkTargetMorph && chkTargetMorph.checked) targets.push('morph');
+    if (chkTargetSense && chkTargetSense.checked) targets.push('sense');
+    if (chkTargetSyntax && chkTargetSyntax.checked) targets.push('syntax');
+    return targets.length > 0 ? targets : ['surface'];
+  }
+
+  function getSelectedSearchMethods() {
+    const methods = [];
+    if (chkMethodText && chkMethodText.checked) methods.push('text');
+    if (chkMethodJamo && chkMethodJamo.checked) methods.push('jamo');
+    if (chkMethodRegex && chkMethodRegex.checked) methods.push('regex');
+    return methods.length > 0 ? methods : ['text'];
+  }
+
+  function updateSearchMethodSummaryLabel() {
+    if (!searchMethodSummaryLabel) return;
+    const targets = getSelectedSearchTargets();
+    const methods = getSelectedSearchMethods();
+
+    const targetNames = [];
+    if (targets.includes('surface')) targetNames.push('원문');
+    if (targets.includes('morph')) targetNames.push('형태');
+    if (targets.includes('sense')) targetNames.push('의미');
+    if (targets.includes('syntax')) targetNames.push('구문');
+    const targetStr = targetNames.length === 4 ? '전체 층위' : targetNames.join('·');
+
+    const methodNames = [];
+    if (methods.includes('text')) methodNames.push('텍스트');
+    if (methods.includes('jamo')) methodNames.push('자소');
+    if (methods.includes('regex')) methodNames.push('정규식');
+    const methodStr = methodNames.join('+');
+
+    searchMethodSummaryLabel.textContent = `🎯 ${targetStr} · ${methodStr}`;
+  }
+
+  if (btnSearchMethodTrigger && searchMethodPopup) {
+    btnSearchMethodTrigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      searchMethodPopup.style.display = searchMethodPopup.style.display === 'none' ? 'block' : 'none';
+    });
+    searchMethodPopup.addEventListener('click', (e) => e.stopPropagation());
+    window.addEventListener('click', () => {
+      searchMethodPopup.style.display = 'none';
+    });
+    if (btnCloseMethodPopup) {
+      btnCloseMethodPopup.addEventListener('click', () => {
+        searchMethodPopup.style.display = 'none';
+      });
+    }
+    if (btnApplySearchMethod) {
+      btnApplySearchMethod.addEventListener('click', () => {
+        searchMethodPopup.style.display = 'none';
+        updateSearchMethodSummaryLabel();
+        runSearch();
+      });
+    }
+
+    [chkTargetSurface, chkTargetMorph, chkTargetSense, chkTargetSyntax,
+     chkMethodText, chkMethodJamo, chkMethodRegex].forEach((chk) => {
+      if (chk) {
+        chk.addEventListener('change', () => {
+          updateSearchMethodSummaryLabel();
+        });
+      }
+    });
+
+    if (btnTargetAll) {
+      btnTargetAll.addEventListener('click', () => {
+        if (chkTargetSurface) chkTargetSurface.checked = true;
+        if (chkTargetMorph) chkTargetMorph.checked = true;
+        if (chkTargetSense) chkTargetSense.checked = true;
+        if (chkTargetSyntax) chkTargetSyntax.checked = true;
+        updateSearchMethodSummaryLabel();
+      });
+    }
+    if (btnTargetSurfaceOnly) {
+      btnTargetSurfaceOnly.addEventListener('click', () => {
+        if (chkTargetSurface) chkTargetSurface.checked = true;
+        if (chkTargetMorph) chkTargetMorph.checked = false;
+        if (chkTargetSense) chkTargetSense.checked = false;
+        if (chkTargetSyntax) chkTargetSyntax.checked = false;
+        updateSearchMethodSummaryLabel();
+      });
+    }
+    if (btnMethodTextOnly) {
+      btnMethodTextOnly.addEventListener('click', () => {
+        if (chkMethodText) chkMethodText.checked = true;
+        if (chkMethodJamo) chkMethodJamo.checked = false;
+        if (chkMethodRegex) chkMethodRegex.checked = false;
+        updateSearchMethodSummaryLabel();
+      });
+    }
+    if (btnMethodJamoRegex) {
+      btnMethodJamoRegex.addEventListener('click', () => {
+        if (chkMethodText) chkMethodText.checked = false;
+        if (chkMethodJamo) chkMethodJamo.checked = true;
+        if (chkMethodRegex) chkMethodRegex.checked = true;
+        updateSearchMethodSummaryLabel();
+      });
+    }
+    updateSearchMethodSummaryLabel();
+  }
+
   async function runSearch() {
     // 1. 선행 파라미터 안전 조회 (TDZ 방지 & 다중 문서 선택 지원)
     const q = searchInput.value;
-    const mode = selectMode.value;
+    const targets = getSelectedSearchTargets().join(',');
+    const methods = getSelectedSearchMethods().join(',');
+    const mode = selectMode ? selectMode.value : 'all';
     const layer = selectLayer.value;
     const isAllDocs = selectedDocIds.has('ALL') || selectedDocIds.size === globalDocuments.length || selectedDocIds.size === 0;
     const docIdsParam = isAllDocs ? 'ALL' : Array.from(selectedDocIds).join(',');
@@ -1473,6 +1604,8 @@ let isSearchInProgress = false;
     const qs = new URLSearchParams({
       q,
       mode,
+      targets,
+      methods,
       layer_filter: layer,
       doc_id: docId,
       doc_ids: docIdsParam,
