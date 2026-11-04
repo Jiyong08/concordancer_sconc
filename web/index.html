@@ -68,55 +68,11 @@
 
           <!-- 윗줄 (Row 1): 가로 한 줄 검색 옵션 바 -->
           <div class="search-options-bar" id="search-options-bar">
-            <div class="opt-pill" style="position:relative;">
+            <div class="opt-pill">
               <label for="btn-search-method-trigger">검색방식</label>
-              <button type="button" class="btn-doc-selector-trigger" id="btn-search-method-trigger" title="검색 대상 층위(원문/형태소/의미/구문)와 연산 방식(텍스트/자소/정규식)을 복합적으로 다중 선택합니다.">
+              <button type="button" class="btn-doc-selector-trigger" id="btn-search-method-trigger" title="검색 대상 층위(원문/형태소/의미/구문)와 연산 방식(텍스트/자소/정규식)을 별도의 창에서 복합적으로 선택합니다.">
                 <span id="search-method-summary-label">🎯 원문 표층 · 텍스트</span> ▾
               </button>
-
-              <!-- 복합 검색 방식 드롭다운 팝업 -->
-              <div id="search-method-popup" class="search-method-popup" style="display:none;">
-                <div class="method-popup-header">
-                  <span>🎯 검색 대상 층위 및 연산 방식 다중 선택</span>
-                  <button type="button" class="btn-close-popup" id="btn-close-method-popup">×</button>
-                </div>
-                <div class="method-popup-body">
-                  <div class="method-group">
-                    <div class="method-group-title">
-                      <span>📂 검색 대상 층위 (복합 선택)</span>
-                      <div class="method-quick-btns">
-                        <button type="button" class="btn-xs" id="btn-target-all">전체</button>
-                        <button type="button" class="btn-xs" id="btn-target-surface-only">원문만</button>
-                      </div>
-                    </div>
-                    <div class="method-checkbox-grid">
-                      <label class="method-chk-label"><input type="checkbox" id="chk-target-surface" checked /> 원문 표층</label>
-                      <label class="method-chk-label"><input type="checkbox" id="chk-target-morph" /> 형태소/품사</label>
-                      <label class="method-chk-label"><input type="checkbox" id="chk-target-sense" /> 형태의미</label>
-                      <label class="method-chk-label"><input type="checkbox" id="chk-target-syntax" /> 구문표지</label>
-                    </div>
-                  </div>
-
-                  <div class="method-group" style="margin-top:10px; border-top:1px solid #e2e8f0; padding-top:8px;">
-                    <div class="method-group-title">
-                      <span>⚙️ 검색 연산 방식 (복합 선택)</span>
-                      <div class="method-quick-btns">
-                        <button type="button" class="btn-xs" id="btn-method-text-only">텍스트만</button>
-                        <button type="button" class="btn-xs" id="btn-method-jamo-regex">자소+정규식</button>
-                      </div>
-                    </div>
-                    <div class="method-checkbox-grid">
-                      <label class="method-chk-label"><input type="checkbox" id="chk-method-text" checked /> 기본 텍스트 (음절/어절)</label>
-                      <label class="method-chk-label"><input type="checkbox" id="chk-method-jamo" /> 자소 검색 [0/1/01]</label>
-                      <label class="method-chk-label"><input type="checkbox" id="chk-method-regex" /> 정규표현식 (Regex)</label>
-                    </div>
-                  </div>
-                </div>
-                <div class="method-popup-footer">
-                  <span class="method-tip">💡 자소 검색과 정규식을 동시에 체크하여 복합 질의를 수행할 수 있습니다.</span>
-                  <button type="button" class="btn btn-primary btn-sm" id="btn-apply-search-method">확인</button>
-                </div>
-              </div>
             </div>
 
             <div class="opt-pill">
@@ -669,6 +625,124 @@
     </div>
     <div class="context-menu-item" id="ctx-copy">
       <span>📋</span> 원문 문장 복사
+    </div>
+  </div>
+
+  <!-- 검색 대상 층위 및 연산 방식 다중 선택 모달 창 (문서지정과 동일한 별도 오버레이 창) -->
+  <div id="modal-search-method" class="modal-overlay" style="display:none;">
+    <div class="modal-card search-method-modal-box">
+      <div class="modal-header">
+        <h3 class="modal-title" style="display:flex; align-items:center; gap:8px;">
+          <span>🎯 검색 대상 층위 및 검색 연산 방식 설정</span>
+        </h3>
+        <button type="button" class="modal-close" id="btn-close-method-modal">✕</button>
+      </div>
+
+      <!-- 본문 내용: 2열 카드 레이아웃 -->
+      <div class="search-method-modal-body">
+        <div class="method-modal-grid">
+          <!-- 좌측: 검색 대상 층위 -->
+          <div class="method-section-card">
+            <div class="method-section-header">
+              <div class="method-section-title">
+                <span>📂 1. 검색 대상 층위 (복합 선택)</span>
+              </div>
+              <div class="method-quick-btns">
+                <button type="button" class="btn btn-outline btn-xs" id="btn-target-all">전체 층위</button>
+                <button type="button" class="btn btn-outline btn-xs" id="btn-target-surface-only">원문만</button>
+              </div>
+            </div>
+            <p class="method-section-desc">입력한 검색 질의어를 매칭할 말뭉치 데이터의 층위를 선택합니다.</p>
+            <div class="method-item-list">
+              <label class="method-item-label">
+                <input type="checkbox" id="chk-target-surface" checked />
+                <div class="method-item-text">
+                  <strong>원문 표층 (surface)</strong>
+                  <span>원문 본문 및 옛한글 표층 텍스트에서 검색</span>
+                </div>
+              </label>
+              <label class="method-item-label">
+                <input type="checkbox" id="chk-target-morph" />
+                <div class="method-item-text">
+                  <strong>형태소/품사 (morph)</strong>
+                  <span>형태소 분절 및 세종 품사 태그에서 검색 (예: 세계/NNG, 가/VV)</span>
+                </div>
+              </label>
+              <label class="method-item-label">
+                <input type="checkbox" id="chk-target-sense" />
+                <div class="method-item-text">
+                  <strong>형태의미 (sense)</strong>
+                  <span>형태소별 동음이의어 어휘 의미 번호에서 검색 (예: 세계__02, 눈__01)</span>
+                </div>
+              </label>
+              <label class="method-item-label">
+                <input type="checkbox" id="chk-target-syntax" />
+                <div class="method-item-text">
+                  <strong>구문표지 (syntax)</strong>
+                  <span>문장 구문 분석 트리 및 구문 범주 태그에서 검색 (예: NP_SBJ, VP)</span>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <!-- 우측: 검색 연산 방식 -->
+          <div class="method-section-card">
+            <div class="method-section-header">
+              <div class="method-section-title">
+                <span>⚙️ 2. 검색 연산 방식 (복합 선택)</span>
+              </div>
+              <div class="method-quick-btns">
+                <button type="button" class="btn btn-outline btn-xs" id="btn-method-text-only">텍스트만</button>
+                <button type="button" class="btn btn-outline btn-xs" id="btn-method-jamo-regex">자소+정규식</button>
+                <button type="button" class="btn btn-outline btn-xs" id="btn-method-all">모든 방식</button>
+              </div>
+            </div>
+            <p class="method-section-desc">질의어를 해석하고 검색할 알고리즘 연산 방식을 선택합니다.</p>
+            <div class="method-item-list">
+              <label class="method-item-label">
+                <input type="checkbox" id="chk-method-text" checked />
+                <div class="method-item-text">
+                  <strong>기본 텍스트 검색 (음절/어절)</strong>
+                  <span>NFD 자모 정규화 및 한양 PUA 변환을 지원하는 기본 음절 일치 검색</span>
+                </div>
+              </label>
+              <label class="method-item-label">
+                <input type="checkbox" id="chk-method-jamo" />
+                <div class="method-item-text">
+                  <strong>자소 단위 검색 ([0/1/01] 문법)</strong>
+                  <span>[초/중/종] 자리별 0(없음), 1(1개), 01(0개/1개) 정밀 자소 매칭</span>
+                </div>
+              </label>
+              <label class="method-item-label">
+                <input type="checkbox" id="chk-method-regex" />
+                <div class="method-item-text">
+                  <strong>정규표현식 검색 (Regex)</strong>
+                  <span>정규표현식 메타문자(.*, +, \b, [A-Z] 등)를 지원하는 정규식 패턴 검색</span>
+                </div>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- 하단 팁 가이드 박스 -->
+        <div class="method-modal-tips">
+          <div class="tip-line">💡 <strong>자소 검색 + 정규식 동시 사용:</strong> 자소 검색과 정규식을 모두 체크하면 <code>[1/ㅏ/0].*다/EF</code>처럼 자소 패턴과 정규식 메타문자를 결합하여 한 번에 검색할 수 있습니다.</div>
+          <div class="tip-line">💡 <strong>다층 층위 자소 검색:</strong> 형태소/품사 층위를 선택하고 자소 검색을 켜면 <code>[1/ㅏ/0]/VV</code>와 같이 어간 자소 패턴으로 용언을 검색할 수 있습니다.</div>
+        </div>
+      </div>
+
+      <!-- 모달 푸터 -->
+      <div class="modal-footer" style="justify-content:space-between; align-items:center;">
+        <div id="method-selection-summary" style="font-size:0.84rem; color:#475569;">
+          현재 설정: <strong id="method-modal-summary-text" style="color:#2563eb;">원문 표층 · 기본 텍스트</strong>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button type="button" class="btn btn-outline" id="btn-cancel-method-modal">닫기</button>
+          <button type="button" class="btn btn-primary" id="btn-apply-method-modal" style="font-weight:700;">
+            ✓ 검색방식 적용
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 

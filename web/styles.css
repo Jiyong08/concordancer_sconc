@@ -1559,112 +1559,125 @@ html, body {
 }
 
 
+
+
+
 /* ==========================================================================
-   Multi-Method & Multi-Target Search Dropdown Popup
+   Search Method Modal Window Styles (Modal Overlay)
    ========================================================================== */
-.search-method-popup {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  z-index: 1050;
-  background: #ffffff;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
-  width: 350px;
-  padding: 12px 14px;
-  font-size: 0.82rem;
-  color: #1e293b;
-}
-
-.method-popup-header {
+.search-method-modal-box {
+  max-width: 860px;
+  width: 92%;
+  max-height: 90vh;
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-weight: 700;
-  color: #0f172a;
-  margin-bottom: 8px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid #e2e8f0;
-  font-size: 0.83rem;
+  flex-direction: column;
 }
 
-.btn-close-popup {
-  background: none;
-  border: none;
-  font-size: 1.1rem;
-  cursor: pointer;
-  color: #64748b;
-  line-height: 1;
-  padding: 0 4px;
-}
-.btn-close-popup:hover {
-  color: #ef4444;
+.search-method-modal-body {
+  padding: 16px 20px;
+  overflow-y: auto;
+  flex: 1;
 }
 
-.method-group-title {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-weight: 600;
-  color: #334155;
-  margin-bottom: 6px;
-  font-size: 0.8rem;
-}
-
-.method-quick-btns {
-  display: flex;
-  gap: 4px;
-}
-
-.btn-xs {
-  font-size: 0.7rem;
-  padding: 1px 6px;
-  border-radius: 4px;
-  border: 1px solid #cbd5e1;
-  background: #f8fafc;
-  color: #475569;
-  cursor: pointer;
-}
-.btn-xs:hover {
-  background: #e2e8f0;
-  color: #0f172a;
-}
-
-.method-checkbox-grid {
+.method-modal-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 6px 12px;
-  margin-bottom: 4px;
+  gap: 16px;
+  margin-bottom: 16px;
 }
 
-.method-chk-label {
+.method-section-card {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 14px;
   display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.78rem;
-  color: #1e293b;
-  cursor: pointer;
-  user-select: none;
-}
-.method-chk-label input[type="checkbox"] {
-  cursor: pointer;
-  accent-color: #2563eb;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.method-popup-footer {
+.method-section-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-top: 10px;
-  padding-top: 8px;
-  border-top: 1px solid #e2e8f0;
 }
 
-.method-tip {
-  font-size: 0.72rem;
+.method-section-title {
+  font-weight: 700;
+  color: #1e293b;
+  font-size: 0.92rem;
+}
+
+.method-section-desc {
+  font-size: 0.78rem;
+  color: #64748b;
+  margin: -2px 0 4px 0;
+}
+
+.method-item-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.method-item-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 9px 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+.method-item-label:hover {
+  border-color: #3b82f6;
+  background: #eff6ff;
+}
+
+.method-item-label input[type="checkbox"] {
+  margin-top: 3px;
+  accent-color: #2563eb;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.method-item-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.method-item-text strong {
+  font-size: 0.85rem;
+  color: #0f172a;
+}
+.method-item-text span {
+  font-size: 0.75rem;
   color: #64748b;
   line-height: 1.3;
-  flex: 1;
-  margin-right: 8px;
+}
+
+.method-modal-tips {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 6px;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tip-line {
+  font-size: 0.78rem;
+  color: #166534;
+  line-height: 1.4;
+}
+
+@media (max-width: 768px) {
+  .method-modal-grid {
+    grid-template-columns: 1fr;
+  }
 }

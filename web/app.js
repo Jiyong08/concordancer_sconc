@@ -23,10 +23,13 @@ let isSearchInProgress = false;
 
   const selectMode = document.getElementById('select-mode');
   const btnSearchMethodTrigger = document.getElementById('btn-search-method-trigger');
-  const searchMethodPopup = document.getElementById('search-method-popup');
-  const btnCloseMethodPopup = document.getElementById('btn-close-method-popup');
-  const btnApplySearchMethod = document.getElementById('btn-apply-search-method');
+  const modalSearchMethod = document.getElementById('modal-search-method');
+  const btnCloseMethodModal = document.getElementById('btn-close-method-modal');
+  const btnCancelMethodModal = document.getElementById('btn-cancel-method-modal');
+  const btnApplyMethodModal = document.getElementById('btn-apply-method-modal');
   const searchMethodSummaryLabel = document.getElementById('search-method-summary-label');
+  const methodModalSummaryText = document.getElementById('method-modal-summary-text');
+  const btnMethodAll = document.getElementById('btn-method-all');
 
   const chkTargetSurface = document.getElementById('chk-target-surface');
   const chkTargetMorph = document.getElementById('chk-target-morph');
@@ -1456,7 +1459,7 @@ let isSearchInProgress = false;
 
 
   // =========================================================================
-  // Multi-Target & Multi-Method Search Configuration Logic
+  // Multi-Target & Multi-Method Search Configuration Modal Window Logic
   // =========================================================================
   function getSelectedSearchTargets() {
     const targets = [];
@@ -1476,7 +1479,6 @@ let isSearchInProgress = false;
   }
 
   function updateSearchMethodSummaryLabel() {
-    if (!searchMethodSummaryLabel) return;
     const targets = getSelectedSearchTargets();
     const methods = getSelectedSearchMethods();
 
@@ -1493,31 +1495,46 @@ let isSearchInProgress = false;
     if (methods.includes('regex')) methodNames.push('정규식');
     const methodStr = methodNames.join('+');
 
-    searchMethodSummaryLabel.textContent = `🎯 ${targetStr} · ${methodStr}`;
+    const summaryText = `${targetStr} · ${methodStr}`;
+    if (searchMethodSummaryLabel) {
+      searchMethodSummaryLabel.textContent = `🎯 ${summaryText}`;
+    }
+    if (methodModalSummaryText) {
+      methodModalSummaryText.textContent = summaryText;
+    }
   }
 
-  if (btnSearchMethodTrigger && searchMethodPopup) {
-    btnSearchMethodTrigger.addEventListener('click', (e) => {
-      e.stopPropagation();
-      searchMethodPopup.style.display = searchMethodPopup.style.display === 'none' ? 'block' : 'none';
+  if (btnSearchMethodTrigger && modalSearchMethod) {
+    // Open modal
+    btnSearchMethodTrigger.addEventListener('click', () => {
+      modalSearchMethod.style.display = 'flex';
+      updateSearchMethodSummaryLabel();
     });
-    searchMethodPopup.addEventListener('click', (e) => e.stopPropagation());
-    window.addEventListener('click', () => {
-      searchMethodPopup.style.display = 'none';
+
+    // Close modal
+    const closeMethodModal = () => {
+      modalSearchMethod.style.display = 'none';
+    };
+
+    if (btnCloseMethodModal) btnCloseMethodModal.addEventListener('click', closeMethodModal);
+    if (btnCancelMethodModal) btnCancelMethodModal.addEventListener('click', closeMethodModal);
+
+    modalSearchMethod.addEventListener('click', (e) => {
+      if (e.target === modalSearchMethod) {
+        closeMethodModal();
+      }
     });
-    if (btnCloseMethodPopup) {
-      btnCloseMethodPopup.addEventListener('click', () => {
-        searchMethodPopup.style.display = 'none';
-      });
-    }
-    if (btnApplySearchMethod) {
-      btnApplySearchMethod.addEventListener('click', () => {
-        searchMethodPopup.style.display = 'none';
+
+    // Apply button
+    if (btnApplyMethodModal) {
+      btnApplyMethodModal.addEventListener('click', () => {
+        closeMethodModal();
         updateSearchMethodSummaryLabel();
         runSearch();
       });
     }
 
+    // Checkbox change handlers
     [chkTargetSurface, chkTargetMorph, chkTargetSense, chkTargetSyntax,
      chkMethodText, chkMethodJamo, chkMethodRegex].forEach((chk) => {
       if (chk) {
@@ -1527,6 +1544,7 @@ let isSearchInProgress = false;
       }
     });
 
+    // Quick preset buttons
     if (btnTargetAll) {
       btnTargetAll.addEventListener('click', () => {
         if (chkTargetSurface) chkTargetSurface.checked = true;
@@ -1561,6 +1579,15 @@ let isSearchInProgress = false;
         updateSearchMethodSummaryLabel();
       });
     }
+    if (btnMethodAll) {
+      btnMethodAll.addEventListener('click', () => {
+        if (chkMethodText) chkMethodText.checked = true;
+        if (chkMethodJamo) chkMethodJamo.checked = true;
+        if (chkMethodRegex) chkMethodRegex.checked = true;
+        updateSearchMethodSummaryLabel();
+      });
+    }
+
     updateSearchMethodSummaryLabel();
   }
 
