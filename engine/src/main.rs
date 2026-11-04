@@ -1433,9 +1433,9 @@ fn handle_search(
     let my_search_seq = state.latest_search_seq.fetch_add(1, Ordering::Relaxed) + 1;
 
     let raw_query = params.get("q").map(|s| s.as_str()).unwrap_or("");
-    let has_leading_space = raw_query.starts_with(' ');
-    let has_trailing_space = raw_query.ends_with(' ');
-    let core_query = raw_query.trim();
+
+
+    let core_query = raw_query;
 
     let targets_param = params.get("targets").map(|s| s.as_str()).unwrap_or("");
     let methods_param = params.get("methods").map(|s| s.as_str()).unwrap_or("");
@@ -1795,22 +1795,9 @@ fn handle_search(
                 continue;
             }
 
-            let display_chars: Vec<char> = display_text.chars().collect();
-            let d_len = display_chars.len();
 
-            let check_boundary = |orig_start: usize, orig_end: usize| -> bool {
-                if has_leading_space {
-                    if orig_start > 0 && !display_chars[orig_start - 1].is_whitespace() {
-                        return false;
-                    }
-                }
-                if has_trailing_space {
-                    if orig_end < d_len && !display_chars[orig_end].is_whitespace() {
-                        return false;
-                    }
-                }
-                true
-            };
+
+
 
             let mut matched_span: Option<(usize, usize, &str)> = None;
 
@@ -1821,9 +1808,7 @@ fn handle_search(
                     let b_tokens = bracket_tokens.as_ref().unwrap();
                     let units = state.normalizer.tokenize_text_units(&display_text);
                     if let Some((sc, ec)) = find_bracket_query_match(b_tokens, &units) {
-                        if check_boundary(sc, ec) {
-                            matched_span = Some((sc, ec, "원문/자소"));
-                        }
+                        matched_span = Some((sc, ec, "원문/자소"));
                     }
                 }
 
@@ -1833,14 +1818,10 @@ fn handle_search(
                     if let Some(m) = re.find(&display_text) {
                         let start_c = display_text[..m.start()].chars().count();
                         let end_c = start_c + display_text[m.start()..m.end()].chars().count();
-                        if check_boundary(start_c, end_c) {
-                            matched_span = Some((start_c, end_c, "원문/정규식"));
-                        }
+                        matched_span = Some((start_c, end_c, "원문/정규식"));
                     } else if let Some(_m) = re.find(&text_nfd_norm) {
-                        if !has_leading_space && !has_trailing_space {
-                            matched_span =
-                                Some((0, display_text.chars().count().min(8), "원문/정규식(NFD)"));
-                        }
+                        matched_span =
+                            Some((0, display_text.chars().count().min(8), "원문/정규식(NFD)"));
                     }
                 }
 
@@ -1863,20 +1844,16 @@ fn handle_search(
                             .map(|&idx| idx + 1)
                             .unwrap_or(orig_start + 1);
 
-                        if check_boundary(orig_start, orig_end) {
-                            matched_span = Some((orig_start, orig_end, "원문/음절"));
-                            break;
-                        }
+                        matched_span = Some((orig_start, orig_end, "원문/음절"));
+                        break;
                     }
 
                     if matched_span.is_none() && text_raw.contains(core_query) {
                         if let Some(byte_pos) = display_text.find(core_query) {
                             let sc = display_text[..byte_pos].chars().count();
                             let ec = sc + core_query.chars().count();
-                            if check_boundary(sc, ec) {
-                                matched_span = Some((sc, ec, "원문(PUA)"));
-                            }
-                        } else if !has_leading_space && !has_trailing_space {
+                            matched_span = Some((sc, ec, "원문(PUA)"));
+                        } else {
                             matched_span =
                                 Some((0, display_text.chars().count().min(6), "원문(PUA)"));
                         }
@@ -1899,10 +1876,8 @@ fn handle_search(
                                 if let Some(byte_pos) = display_text.find(w) {
                                     let sc = display_text[..byte_pos].chars().count();
                                     let ec = sc + w.chars().count();
-                                    if check_boundary(sc, ec) {
-                                        matched_span = Some((sc, ec, "형태소/자소"));
-                                        break;
-                                    }
+                                    matched_span = Some((sc, ec, "형태소/자소"));
+                                    break;
                                 }
                             }
                         }
@@ -1918,10 +1893,8 @@ fn handle_search(
                                 if let Some(byte_pos) = display_text.find(w) {
                                     let sc = display_text[..byte_pos].chars().count();
                                     let ec = sc + w.chars().count();
-                                    if check_boundary(sc, ec) {
-                                        matched_span = Some((sc, ec, "형태소/정규식"));
-                                        break;
-                                    }
+                                    matched_span = Some((sc, ec, "형태소/정규식"));
+                                    break;
                                 }
                             }
                         }
@@ -1943,10 +1916,8 @@ fn handle_search(
                                     if let Some(byte_pos) = display_text.find(w) {
                                         let sc = display_text[..byte_pos].chars().count();
                                         let ec = sc + w.chars().count();
-                                        if check_boundary(sc, ec) {
-                                            matched_span = Some((sc, ec, "형태분석"));
-                                            break;
-                                        }
+                                        matched_span = Some((sc, ec, "형태분석"));
+                                        break;
                                     }
                                 }
                             }
@@ -1970,10 +1941,8 @@ fn handle_search(
                                 if let Some(byte_pos) = display_text.find(w) {
                                     let sc = display_text[..byte_pos].chars().count();
                                     let ec = sc + w.chars().count();
-                                    if check_boundary(sc, ec) {
-                                        matched_span = Some((sc, ec, "형태의미/자소"));
-                                        break;
-                                    }
+                                    matched_span = Some((sc, ec, "형태의미/자소"));
+                                    break;
                                 }
                             }
                         }
@@ -1989,10 +1958,8 @@ fn handle_search(
                                 if let Some(byte_pos) = display_text.find(w) {
                                     let sc = display_text[..byte_pos].chars().count();
                                     let ec = sc + w.chars().count();
-                                    if check_boundary(sc, ec) {
-                                        matched_span = Some((sc, ec, "형태의미/정규식"));
-                                        break;
-                                    }
+                                    matched_span = Some((sc, ec, "형태의미/정규식"));
+                                    break;
                                 }
                             }
                         }
@@ -2014,10 +1981,8 @@ fn handle_search(
                                     if let Some(byte_pos) = display_text.find(w) {
                                         let sc = display_text[..byte_pos].chars().count();
                                         let ec = sc + w.chars().count();
-                                        if check_boundary(sc, ec) {
-                                            matched_span = Some((sc, ec, "형태의미"));
-                                            break;
-                                        }
+                                        matched_span = Some((sc, ec, "형태의미"));
+                                        break;
                                     }
                                 }
                             }
@@ -2039,9 +2004,7 @@ fn handle_search(
                     let b_tokens = bracket_tokens.as_ref().unwrap();
                     let syn_units = state.normalizer.tokenize_text_units(&syntax_tree);
                     if find_bracket_query_match(b_tokens, &syn_units).is_some() {
-                        if check_boundary(0, first_word_len) {
-                            matched_span = Some((0, first_word_len, "구문/자소"));
-                        }
+                        matched_span = Some((0, first_word_len, "구문/자소"));
                     }
                 }
 
@@ -2049,9 +2012,7 @@ fn handle_search(
                 if use_regex && compiled_regex.is_some() && matched_span.is_none() {
                     let re = compiled_regex.as_ref().unwrap();
                     if re.is_match(&syntax_tree) {
-                        if check_boundary(0, first_word_len) {
-                            matched_span = Some((0, first_word_len, "구문/정규식"));
-                        }
+                        matched_span = Some((0, first_word_len, "구문/정규식"));
                     }
                 }
 
@@ -2059,9 +2020,7 @@ fn handle_search(
                 if use_text && matched_span.is_none() {
                     let norm_syn = state.normalizer.normalize_morph_str(&syntax_tree);
                     if syntax_tree.contains(core_query) || norm_syn.contains(&norm_morph_query) {
-                        if check_boundary(0, first_word_len) {
-                            matched_span = Some((0, first_word_len, "구문분석"));
-                        }
+                        matched_span = Some((0, first_word_len, "구문분석"));
                     }
                 }
             }
@@ -3357,58 +3316,20 @@ mod tests {
     }
 
     #[test]
-    fn test_space_word_boundary_rules() {
+    fn test_space_literal_character_match() {
         let normalizer = Normalizer::new(std::path::Path::new("assets/data/pua_table.json"));
-        let query = "하도";
+        let query = "하도 말이";
         let query_nfd = normalizer.to_nfd_norm(query);
         let query_chars: Vec<char> = query_nfd.chars().collect();
 
-        // Helper boundary checker
-        let check = |text: &str, has_leading: bool, has_trailing: bool| -> bool {
-            let (norm, char_map) = normalizer.to_nfd_norm_with_map(text);
-            let display_chars: Vec<char> = text.chars().collect();
-            let d_len = display_chars.len();
-            let candidates = find_all_char_subslices(&norm, &query_chars);
-
-            for (n_start, n_end) in candidates {
-                if n_end < norm.len() && is_jongseong_jamo(norm[n_end]) {
-                    continue;
-                }
-                let orig_start = char_map.get(n_start).copied().unwrap_or(0);
-                let orig_end = char_map.get(n_end.saturating_sub(1)).map(|&idx| idx + 1).unwrap_or(orig_start + 1);
-
-                let mut ok = true;
-                if has_leading {
-                    if orig_start > 0 && !display_chars[orig_start - 1].is_whitespace() {
-                        ok = false;
-                    }
-                }
-                if has_trailing {
-                    if orig_end < d_len && !display_chars[orig_end].is_whitespace() {
-                        ok = false;
-                    }
-                }
-                if ok {
-                    return true;
-                }
-            }
-            false
-        };
-
-        // Query ' 하도 ' (has_leading=true, has_trailing=true)
-        // 1. Sentence start: "하도 말이 많다" -> MUST MATCH! (요구사항 3)
-        assert!(check("하도 말이 많다", true, true));
-
-        // 2. Mid-sentence isolated adverb: "정말 하도 어이가 없다" -> MUST MATCH! (요구사항 2)
-        assert!(check("정말 하도 어이가 없다", true, true));
-
-        // 3. Substring in word: "말하도록 하였다" -> MUST NOT MATCH! (요구사항 2)
-        assert!(!check("말하도록 하였다", true, true));
-
-        // 4. Substring at end of word: "일하도 말았다" -> MUST NOT MATCH!
-        assert!(!check("일하도 말았다", true, true));
-
-        // 5. Followed by jongseong: "하동으로 갔다" -> MUST NOT MATCH! (요구사항 4)
-        assert!(!check("하동으로 갔다", true, true));
+        let text = "그는 하도 말이 많아서 탈이다";
+        let (norm, char_map) = normalizer.to_nfd_norm_with_map(text);
+        let candidates = find_all_char_subslices(&norm, &query_chars);
+        assert_eq!(candidates.len(), 1);
+        let (s, e) = candidates[0];
+        let orig_start = char_map.get(s).copied().unwrap_or(0);
+        let orig_end = char_map.get(e.saturating_sub(1)).map(|&idx| idx + 1).unwrap_or(orig_start + 1);
+        let matched: String = text.chars().skip(orig_start).take(orig_end - orig_start).collect();
+        assert_eq!(matched, "하도 말이");
     }
 }

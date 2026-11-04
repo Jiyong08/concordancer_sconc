@@ -385,16 +385,53 @@
       </section>
 
       <!-- TAB 4: USAGE & SEARCH GUIDE (자소 검색 · 옛한글 입력법 · 다층 검색 · 원클릭 예시) -->
+            <!-- TAB 4: USAGE & SEARCH GUIDE (다층 검색법 · 자소 검색 · 세종 태그세트 · 옛한글 입력법) -->
       <section id="tab-guide" class="tab-panel">
         <div class="panel-card" style="flex:1;">
           <div class="panel-header">
-            <h2 class="panel-title">📖 사용법 및 검색 방법 안내 (자소 검색 `[초/중/종]` · 한컴 두벌식 옛글 입력법 · 원클릭 예시 실행)</h2>
+            <h2 class="panel-title">📖 사용법 및 검색 방법 안내 (형태·구문·자소 다층 검색법 · 21세기 세종계획 품사 태그세트 · 한컴 두벌식 옛글 입력법)</h2>
           </div>
           <div class="scrollable-card-body">
             <div class="guide-grid">
-              <!-- 1. 자소 대괄호 [초/중/종] 검색 문법 (0, 1, 01 및 다층 복합 검색) -->
+              <!-- 1. 다층 주석(형태·의미·구문) 및 정규식 검색 안내 -->
               <div class="guide-box">
-                <h3>1. 대괄호 자소 검색 문법 (`0`, `1`, `01` 슬롯 표기법 및 정규식 결합)</h3>
+                <h3>1. 형태소 · 형태의미(어깨번호) · 구문 표지 · 정규식 검색법</h3>
+                <table class="guide-table">
+                  <thead>
+                    <tr>
+                      <th style="width:120px;">검색 방식</th>
+                      <th>설명 및 문법</th>
+                      <th>검색어 예시</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><strong>형태소 / 품사</strong></td>
+                      <td><code>형태소/품사태그</code> 또는 <code>/품사태그</code> 입력. 첫가끝 종성(<code>ᆫ/ETM</code>)과 호환자모(<code>ㄴ/ETM</code>)를 자동 통합 매칭합니다.</td>
+                      <td><code>교양/NNG</code>, <code>ㄴ/ETM</code>, <code>하/XSV</code></td>
+                    </tr>
+                    <tr>
+                      <td><strong>형태의미 (어깨번호)</strong></td>
+                      <td>세종 형태의미 말뭉치의 표준국어대사전 어깨번호(<code>단어__번호</code> 또는 <code>단어__번호/품사</code>)로 동음이의어를 구별 검색합니다.</td>
+                      <td><code>세계__02</code>, <code>생각__01/NNG</code>, <code>일__01</code></td>
+                    </tr>
+                    <tr>
+                      <td><strong>구문분석 표지</strong></td>
+                      <td>세종 구문분석 트리뱅크(S-식)의 구문 표지(예: 주어 <code>NP_SBJ</code>, 목적어 <code>NP_OBJ</code>, 관형절 <code>VP_MOD</code>)로 검색합니다.</td>
+                      <td><code>NP_SBJ</code>, <code>VP_MOD</code>, <code>NP_OBJ</code></td>
+                    </tr>
+                    <tr>
+                      <td><strong>정규표현식 (Regex)</strong></td>
+                      <td>표준 정규식을 사용하여 패턴 검색을 수행합니다. 실행 시간이 길어질 경우 우측 <strong>[⏹ 검색 종료]</strong> 버튼으로 즉시 중단할 수 있습니다.</td>
+                      <td><code>[가-힣]+에서\s+[가-힣]+으로</code></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- 2. 대괄호 자소 검색 문법 (0, 1, 01 슬롯 표기법 및 정규식 결합) -->
+              <div class="guide-box">
+                <h3>2. 대괄호 자소 검색 문법 (`0`, `1`, `01` 슬롯 표기법 및 정규식 결합)</h3>
                 <p style="font-size:0.82rem; margin:0 0 8px 0; color:#334155;">
                   한글 음절을 대괄호 <code>[초성/중성/종성]</code> 안에 슬래시(<code>/</code>)로 구분하여 검색합니다.<br/>
                   자소 자리마다 <strong>0</strong>(없음/0개), <strong>1</strong>(임의의 1개 자소), <strong>01</strong>(0개 또는 1개)을 입력하여 정밀하게 검색할 수 있습니다.
@@ -437,9 +474,90 @@
                 </table>
               </div>
 
-              <!-- 2. 한글과컴퓨터 두벌식 옛글 입력법 -->
+              <!-- 3. 국립국어원 21세기 세종계획 형태분석 품사 태그세트 -->
+              <div class="guide-box" style="grid-column: 1 / -1;">
+                <h3>3. 국립국어원 21세기 세종계획 형태분석 품사 태그세트 표</h3>
+                <p style="font-size:0.82rem; margin:0 0 10px 0; color:#334155;">
+                  형태소/품사 검색(예: <code>/NNG</code>, <code>하/XSV</code>) 및 형태의미 검색 시 사용되는 표준 세종 품사 태그(42개 범주) 분류 체계입니다.
+                </p>
+                <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap:12px;">
+                  <div>
+                    <table class="guide-table">
+                      <thead>
+                        <tr>
+                          <th style="width:75px;">대분류</th>
+                          <th style="width:65px;">태그</th>
+                          <th style="width:90px;">품사 명칭</th>
+                          <th>설명 및 주요 예시</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr><td rowspan="5"><strong>체언</strong><br/>(Nominals)</td><td><code>NNG</code></td><td>일반 명사</td><td>사람, 자동차, 사랑, 컴퓨터</td></tr>
+                        <tr><td><code>NNP</code></td><td>고유 명사</td><td>서울, 세종대왕, 한라산</td></tr>
+                        <tr><td><code>NNB</code></td><td>의존 명사</td><td>것, 수, 줄, 뿐, 개, 명</td></tr>
+                        <tr><td><code>NP</code></td><td>대명사</td><td>나, 너, 우리, 이것, 저기</td></tr>
+                        <tr><td><code>NR</code></td><td>수사</td><td>하나, 둘, 첫째, 백</td></tr>
+                        <tr><td rowspan="5"><strong>용언</strong><br/>(Predicates)</td><td><code>VV</code></td><td>동사</td><td>먹다, 가다, 하다, 달리다</td></tr>
+                        <tr><td><code>VA</code></td><td>형용사</td><td>예쁘다, 크다, 좋다, 아름답다</td></tr>
+                        <tr><td><code>VX</code></td><td>보조 용언</td><td>-아 있다, -고 싶다, -어 보다</td></tr>
+                        <tr><td><code>VCP</code></td><td>긍정 지정사</td><td>서술격 조사(이다)</td></tr>
+                        <tr><td><code>VCN</code></td><td>부정 지정사</td><td>형용사(아니다)</td></tr>
+                        <tr><td rowspan="3"><strong>수식언</strong><br/>(Modifiers)</td><td><code>MM</code></td><td>관형사</td><td>새, 헌, 온갖, 모든</td></tr>
+                        <tr><td><code>MAG</code></td><td>일반 부사</td><td>매우, 빨리, 더, 가장</td></tr>
+                        <tr><td><code>MAJ</code></td><td>접속 부사</td><td>그러나, 그리고, 및</td></tr>
+                        <tr><td><strong>독립언</strong></td><td><code>IC</code></td><td>감탄사</td><td>아, 어머, 네, 그래</td></tr>
+                        <tr><td rowspan="9"><strong>관계언</strong><br/>(Particles)</td><td><code>JKS</code></td><td>주격 조사</td><td>이, 가, 께서</td></tr>
+                        <tr><td><code>JKC</code></td><td>보격 조사</td><td>'되다/아니다' 앞의 이, 가</td></tr>
+                        <tr><td><code>JKG</code></td><td>관형격 조사</td><td>의</td></tr>
+                        <tr><td><code>JKO</code></td><td>목적격 조사</td><td>을, 를</td></tr>
+                        <tr><td><code>JKB</code></td><td>부사격 조사</td><td>에, 에서, 에게, 로, 와</td></tr>
+                        <tr><td><code>JKV</code></td><td>호격 조사</td><td>아, 야, 여</td></tr>
+                        <tr><td><code>JKQ</code></td><td>인용격 조사</td><td>라고, 고</td></tr>
+                        <tr><td><code>JX</code></td><td>보조사</td><td>은, 는, 도, 만, 까지, 부터</td></tr>
+                        <tr><td><code>JC</code></td><td>접속 조사</td><td>와, 과, 랑, 이며</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div>
+                    <table class="guide-table">
+                      <thead>
+                        <tr>
+                          <th style="width:75px;">대분류</th>
+                          <th style="width:65px;">태그</th>
+                          <th style="width:90px;">품사 명칭</th>
+                          <th>설명 및 주요 예시</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr><td rowspan="5"><strong>어미</strong><br/>(Endings)</td><td><code>EP</code></td><td>선어말 어미</td><td>-시-, -었-, -겠-, -더-</td></tr>
+                        <tr><td><code>EF</code></td><td>종결 어미</td><td>-다, -니, -라, -냐, -오</td></tr>
+                        <tr><td><code>EC</code></td><td>연결 어미</td><td>-고, -며, -면, -어서, -지</td></tr>
+                        <tr><td><code>ETN</code></td><td>명사형 전성 어미</td><td>-ㅁ, -기</td></tr>
+                        <tr><td><code>ETM</code></td><td>관형형 전성 어미</td><td>-ㄴ, -는, -ㄹ, -던</td></tr>
+                        <tr><td rowspan="5"><strong>접사 및<br/>어근</strong></td><td><code>XPN</code></td><td>체언 접두사</td><td>풋-, 맨-, 헛-, 참-</td></tr>
+                        <tr><td><code>XSN</code></td><td>명사 파생 접미사</td><td>-들, -님, -적, -화, -성</td></tr>
+                        <tr><td><code>XSV</code></td><td>동사 파생 접미사</td><td>-하다, -되다, -시키다</td></tr>
+                        <tr><td><code>XSA</code></td><td>형용사 파생 접미사</td><td>-하다, -스럽다, -답다</td></tr>
+                        <tr><td><code>XR</code></td><td>어근</td><td>깨끗, 영롱, 조용</td></tr>
+                        <tr><td rowspan="10"><strong>기호 및<br/>특수</strong></td><td><code>SF</code></td><td>마침 부호</td><td>마침표(.), 물음표(?), 느낌표(!)</td></tr>
+                        <tr><td><code>SP</code></td><td>쉼표·빗금 등</td><td>쉼표(,), 가운뎃점(·), 빗금(/)</td></tr>
+                        <tr><td><code>SS</code></td><td>따옴표·괄호</td><td>따옴표(' "), 괄호(( ) [ ]), 줄표(-)</td></tr>
+                        <tr><td><code>SE</code></td><td>줄임표</td><td>말줄임표(……)</td></tr>
+                        <tr><td><code>SO</code></td><td>붙임표(하이픈)</td><td>물결표(~), 숨김표, 빠짐표</td></tr>
+                        <tr><td><code>SW</code></td><td>기타 기호</td><td>화폐·수학·단위 기호($, %, ㎡)</td></tr>
+                        <tr><td><code>SL</code></td><td>외국어</td><td>알파벳, 가나 등 외국 문자</td></tr>
+                        <tr><td><code>SH</code></td><td>한자</td><td>한자 및 한자 기호</td></tr>
+                        <tr><td><code>SN</code></td><td>숫자</td><td>아라비아 숫자(0~9)</td></tr>
+                        <tr><td><code>NA</code></td><td>분석 불능</td><td>미인식·분석불능 토큰</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 4. 한글과컴퓨터 두벌식 옛글 입력법 -->
               <div class="guide-box">
-                <h3>2. 한글과컴퓨터(한컴오피스) 두벌식 옛글 입력법 안내</h3>
+                <h3>4. 한글과컴퓨터(한컴오피스) 두벌식 옛글 입력법 안내</h3>
                 <p style="font-size:0.82rem; margin:0 0 8px 0; color:#334155;">
                   검색창 우측의 <strong>[⌨️ 옛한글 입력: ON]</strong> 버튼을 켜면 OS 한/영 상태와 무관하게 한컴 두벌식 옛글 타건 규칙으로 즉시 조합됩니다.
                 </p>
@@ -481,93 +599,6 @@
                 </table>
               </div>
 
-              <!-- 3. 공백(스페이스) 어절 경계 및 문장 첫머리 매칭 규칙 & 음절 단위 일반 검색 -->
-              <div class="guide-box">
-                <h3>3. 공백(스페이스)을 이용한 어절 경계 및 문장 첫머리 매칭 규칙</h3>
-                <p style="font-size:0.82rem; margin:0 0 8px 0; color:#334155;">
-                  검색식 앞뒤에 스페이스(공백)를 입력하면 독립된 어절 단위로 검색을 수행할 수 있습니다.
-                </p>
-                <table class="guide-table">
-                  <thead>
-                    <tr>
-                      <th style="width:130px;">검색식 형태</th>
-                      <th>매칭 규칙 및 의미</th>
-                      <th>적용 예시</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td><code>' 하도 '</code> (앞뒤 공백)</td>
-                      <td>
-                        <strong>독립된 어절</strong>로 쓰인 경우만 검색합니다.<br/>
-                        • <strong>앞 공백</strong>: 문장의 첫 부분(행의 첫머리)이거나 바로 앞이 공백인 경우 모두 일치합니다.<br/>
-                        • <strong>뒤 공백</strong>: 문장의 끝이거나 바로 뒤가 공백인 경우 일치합니다.
-                      </td>
-                      <td>
-                        <strong>매칭:</strong> <code>하도 세월이 좋아</code>, <code>그는 하도 말이 많다</code><br/>
-                        <span style="color:#dc2626;"><strong>제외:</strong></span> <code>말<strong>하도</strong>록</code>, <code>일<strong>하도</strong>록</code>
-                      </td>
-                    </tr>
-                    <tr>
-                      <td><code>' 하도'</code> (앞 공백만)</td>
-                      <td>어절의 시작 부분(어두) 또는 문장의 첫머리에 오는 경우만 검색합니다.</td>
-                      <td><code>하도</code>, <code>하더라도</code> (단, <code>말하도록</code>은 제외)</td>
-                    </tr>
-                    <tr>
-                      <td><code>'하도 '</code> (뒤 공백만)</td>
-                      <td>어절의 끝 부분(어말) 또는 문장의 끝에 오는 경우만 검색합니다.</td>
-                      <td><code>하도</code>, <code>말하도</code> (단, <code>하더라도</code>는 제외)</td>
-                    </tr>
-                    <tr>
-                      <td><strong>음절 단위 일반 검색</strong></td>
-                      <td>
-                        자소 검색 모드(<code>jamo</code>)를 선택하지 않은 일반 검색(<code>all</code>, <code>surface</code>)에서는
-                        <strong>완성형 음절 단위</strong>로 검색됩니다.
-                      </td>
-                      <td>
-                        <code>하도</code> 검색 시 받침이 붙은 <code>하동(ㅎㅏㄷㅗㅇ)</code> 등은 <strong>검색에서 완벽히 제외</strong>됩니다.
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-
-              <!-- 4. 다층 주석(형태·의미·구문) 및 정규식 검색 안내 -->
-              <div class="guide-box">
-                <h3>4. 형태소 · 형태의미(어깨번호) · 구문 표지 · 정규식 검색법</h3>
-                <table class="guide-table">
-                  <thead>
-                    <tr>
-                      <th style="width:120px;">검색 방식</th>
-                      <th>설명 및 문법</th>
-                      <th>검색어 예시</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td><strong>형태소 / 품사</strong></td>
-                      <td><code>형태소/품사태그</code> 또는 <code>/품사태그</code> 입력. 첫가끝 종성(<code>ᆫ/ETM</code>)과 호환자모(<code>ㄴ/ETM</code>)를 자동 통합 매칭합니다.</td>
-                      <td><code>교양/NNG</code>, <code>ㄴ/ETM</code>, <code>하/XSV</code></td>
-                    </tr>
-                    <tr>
-                      <td><strong>형태의미 (어깨번호)</strong></td>
-                      <td>세종 형태의미 말뭉치의 표준국어대사전 어깨번호(<code>단어__번호</code> 또는 <code>단어__번호/품사</code>)로 동음이의어를 구별 검색합니다.</td>
-                      <td><code>세계__02</code>, <code>생각__01/NNG</code>, <code>일__01</code></td>
-                    </tr>
-                    <tr>
-                      <td><strong>구문분석 표지</strong></td>
-                      <td>세종 구문분석 트리뱅크(S-식)의 구문 표지(예: 주어 <code>NP_SBJ</code>, 목적어 <code>NP_OBJ</code>, 관형절 <code>VP_MOD</code>)로 검색합니다.</td>
-                      <td><code>NP_SBJ</code>, <code>VP_MOD</code>, <code>NP_OBJ</code></td>
-                    </tr>
-                    <tr>
-                      <td><strong>정규표현식 (Regex)</strong></td>
-                      <td>표준 정규식을 사용하여 패턴 검색을 수행합니다. 실행 시간이 길어질 경우 우측 <strong>[⏹ 검색 종료]</strong> 버튼으로 즉시 중단할 수 있습니다.</td>
-                      <td><code>[가-힣]+에서\s+[가-힣]+으로</code></td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-
               <!-- 5. 원클릭 예시 검색 실행 -->
               <div class="guide-box">
                 <h3>5. ⚡ 원클릭 예시 검색 (클릭 시 검색 화면으로 이동하여 즉시 실행)</h3>
@@ -575,12 +606,13 @@
                   아래 예시 버튼을 클릭하면 검색창에 해당 식이 자동으로 입력되며 즉시 결과를 확인하실 수 있습니다.
                 </p>
                 <div style="margin-bottom:8px;">
-                  <strong style="font-size:0.78rem; color:#1e40af;">[자소 `[초/중/종]` 및 와일드카드 검색 예시]</strong><br/>
-                  <button type="button" class="preset-chip" data-q="[ㄱ/ㅏ/ㅇ]" data-mode="jamo" data-layer="ALL"><code>[ㄱ/ㅏ/ㅇ]</code> (강)</button>
-                  <button type="button" class="preset-chip" data-q="[ㄱ/*/ㅇ]산" data-mode="jamo" data-layer="ALL"><code>[ㄱ/*/ㅇ]산</code> (강산·공산·경산…)</button>
-                  <button type="button" class="preset-chip" data-q="[?/ㅏ/ㅇ]산" data-mode="jamo" data-layer="ALL"><code>[?/ㅏ/ㅇ]산</code> (초성 임의 + ㅏ + ㅇ + 산)</button>
-                  <button type="button" class="preset-chip" data-q="[ㅎ/ㅏ/][ㄴ/ㆍ/ㄹ]" data-mode="jamo" data-layer="OLD_HANGUL"><code>[ㅎ/ㅏ/][ㄴ/ㆍ/ㄹ]</code> (옛한글 하ᄂᆞᆯ)</button>
-                  <button type="button" class="preset-chip" data-q="[ㅅ/ㅏ/][ㄹ/ㆍ/+]" data-mode="jamo" data-layer="OLD_HANGUL"><code>[ㅅ/ㅏ/][ㄹ/ㆍ/+]</code> (옛한글 사ᄅᆞᆷ 등 받침 필수)</button>
+                  <strong style="font-size:0.78rem; color:#1e40af;">[자소 `[초/중/종]` 및 0·1·01 슬롯 검색 예시]</strong><br/>
+                  <button type="button" class="preset-chip" data-q="[ㄱ/ㅏ/0]" data-mode="jamo" data-layer="ALL"><code>[ㄱ/ㅏ/0]</code> (가 - 무받침)</button>
+                  <button type="button" class="preset-chip" data-q="[ㄱ/ㅏ/1]" data-mode="jamo" data-layer="ALL"><code>[ㄱ/ㅏ/1]</code> (각, 간, 갈… 받침 1개)</button>
+                  <button type="button" class="preset-chip" data-q="[1/ㅏ/0]" data-mode="jamo" data-layer="ALL"><code>[1/ㅏ/0]</code> (가, 나, 다… 임의초성+ㅏ 무받침)</button>
+                  <button type="button" class="preset-chip" data-q="[1/1/0]" data-mode="jamo" data-layer="ALL"><code>[1/1/0]</code> (모든 받침 없는 음절)</button>
+                  <button type="button" class="preset-chip" data-q="[ㅎ/ㅏ/0][ㄴ/ㆍ/01]" data-mode="jamo" data-layer="OLD_HANGUL"><code>[ㅎ/ㅏ/0][ㄴ/ㆍ/01]</code> (하ᄂᆞ, 하ᄂᆞᆯ)</button>
+                  <button type="button" class="preset-chip" data-q="[ㅅ/ㅏ/0][ㄹ/ㆍ/1]" data-mode="jamo" data-layer="OLD_HANGUL"><code>[ㅅ/ㅏ/0][ㄹ/ㆍ/1]</code> (사ᄅᆞᆷ 등 받침 필수)</button>
                 </div>
                 <div style="margin-bottom:8px;">
                   <strong style="font-size:0.78rem; color:#6b21a8;">[옛한글 문헌 (간이벽온방 · 첩해신어 · 훈몽자회) 검색 예시]</strong><br/>
