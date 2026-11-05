@@ -497,13 +497,9 @@ let isSearchInProgress = false;
         });
       });
 
-      // Run initial showcase search (사용자가 이미 입력 중인 경우 덮어쓰지 않음)
-      if (!searchInput.value.trim() && document.activeElement !== searchInput) {
-        searchInput.value = '세계__02';
-        selectMode.value = 'all';
-        selectLayer.value = 'ALL';
-        runSearch();
-      }
+      // [요청 반영 1] 프로그램 구동 시 자동 검색 비활성화 (사용자가 검색 버튼을 누를 때만 실행)
+      searchInput.value = '';
+      kwicResultMeta.textContent = '검색어를 입력하거나 특정 문서를 선택한 후 [🔍 검색]을 누르세요.';
     } catch (err) {
       console.error('Overview load error:', err);
     }
@@ -1783,8 +1779,60 @@ let isSearchInProgress = false;
     updateSearchMethodSummaryLabel();
   }
 
+  // KWIC 테이블 행 생성 헬퍼
+  function createKwicRowHtml(h) {
+    const badges = [];
+    if (h.corpus_category && h.corpus_category.includes('옛한글')) {
+      badges.push('<span class="layer-badge badge-old">옛한글</span>');
+    }
+    if (h.has_morph) {
+      badges.push('<span class="layer-badge badge-morph">형태</span>');
+    }
+    if (h.has_sense) {
+      badges.push('<span class="layer-badge badge-sense">의미</span>');
+    }
+    if (h.has_syntax) {
+      badges.push('<span class="layer-badge badge-syntax">구문</span>');
+    }
+    const loc = h.page_ref
+      ? `${h.doc_id} (${h.page_ref})`
+      : `${h.doc_id} #${h.seq_no}`;
+
+    return `
+      <tr class="kwic-row" data-seg-id="${h.segment_id}" data-text="${escapeHtml(h.text_unicode)}" title="클릭: 상세 뷰어 / 더블클릭: 뷰어 펼치기 / 마우스 우클릭: 원본 파일 점프">
+        <td>
+          <div style="font-weight:700; font-size:0.76rem; color:#1e293b;">${escapeHtml(loc)}</div>
+          <div style="font-size:0.7rem; color:#64748b;">[${escapeHtml(h.match_layer)}]</div>
+        </td>
+        <td>${badges.join('')}</td>
+        <td class="kwic-left">${escapeHtml(h.left_context)}</td>
+        <td class="kwic-node-cell"><span class="kwic-node">${escapeHtml(h.node || '·')}</span></td>
+        <td class="kwic-right">${escapeHtml(h.right_context)}</td>
+      </tr>
+    `;
+  }
+
+  function bindKwicRowItemEvents(r, tab) {
+    r.addEventListener('click', () => {
+      kwicTbody.querySelectorAll('.kwic-row').forEach((x) => x.classList.remove('selected'));
+      r.classList.add('selected');
+      tab.selectedSegId = r.dataset.segId;
+      loadSegmentDetail(r.dataset.segId);
+    });
+    r.addEventListener('dblclick', () => {
+      setInspectorExpanded(true);
+    });
+    r.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      kwicTbody.querySelectorAll('.kwic-row').forEach((x) => x.classList.remove('selected'));
+      r.classList.add('selected');
+      rightClickedSegId = r.dataset.segId;
+      showContextMenu(e.clientX, e.clientY);
+    });
+  }
+
+  // [요청 반영] 실시간 스트리밍 검색 (검색된 문장이 검색되자마자 즉시 화면에 행 추가)
   async function runSearch() {
-    // 1. 선행 파라미터 안전 조회 (TDZ 방지 & 다중 문서 선택 지원)
     const q = searchInput.value;
     const targets = getSelectedSearchTargets().join(',');
     const methods = getSelectedSearchMethods().join(',');
@@ -1801,7 +1849,6 @@ let isSearchInProgress = false;
       return;
     }
 
-    // 2. 직전 검색이 진행 중인 경우 조용히 취소 (새 검색으로 인한 정상 교체)
     searchExplicitlyCancelled = false;
     if (currentSearchAbort) {
       try {
@@ -1810,19 +1857,89 @@ let isSearchInProgress = false;
       currentSearchAbort = null;
     }
 
-    // 3. 고유 시퀀스 번호 및 AbortController 발급
     const mySearchSeq = ++currentSearchSeq;
     const myAbortController = new AbortController();
     currentSearchAbort = myAbortController;
     isSearchInProgress = true;
 
-    // UI 상태 반영 (취소 버튼 노출 및 검색 버튼 비활성화)
     btnCancelSearch.style.display = 'inline-flex';
     if (btnSearch) {
       btnSearch.disabled = true;
       btnSearch.innerHTML = '⏳ 검색 중...';
     }
-    kwicResultMeta.innerHTML = '<strong style="color:#2563eb;">⏳ 검색 진행 중… (우측 [⏹ 검색 종료] 버튼으로 중단 가능)</strong>';
+
+    const ctxLabel = contextWords === '999' ? '문장 전체' : `좌우 ${contextWords}어절`;
+    let docLabel = '전체 문서';
+    if (selectedDocIds && !selectedDocIds.has('ALL') && selectedDocIds.size > 0) {
+      docLabel = selectedDocIds.size === 1 ? Array.from(selectedDocIds)[0] : `${selectedDocIds.size}개 문서`;
+    }
+
+    kwicResultTitle.textContent = q
+      ? `용례 검색 결과: "${q}" [${docLabel}] (${ctxLabel})`
+      : `문서 열람 (${docLabel} · ${ctxLabel})`;
+
+    kwicResultMeta.innerHTML = '<strong style="color:#2563eb;">⚡ 실시간 검색 시작… 문장이 발견되는 즉시 아래에 바로 추가됩니다.</strong>';
+    kwicTbody.innerHTML = ''; // 이전 결과 비우고 즉시 대기 화면 구축
+
+    // 검색 탭 생성 또는 재사용
+    const tabTitle = q || getDocSelectionSummaryLabel();
+    let targetTab = null;
+    if (searchTabs.length > 0 && activeTabId) {
+      const curTab = searchTabs.find((t) => t.id === activeTabId);
+      if (curTab && !curTab.query && (!curTab.data || !curTab.data.hits || curTab.data.hits.length === 0)) {
+        targetTab = curTab;
+      }
+    }
+
+    if (!targetTab) {
+      if (searchTabs.length >= 10) {
+        searchTabs.shift();
+      }
+      targetTab = {
+        id: 'tab_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+        query: q,
+        title: tabTitle,
+        mode,
+        layer,
+        docId,
+        docIds: new Set(selectedDocIds),
+        contextWords,
+        limit,
+        data: {
+          query: q,
+          total_matches: 0,
+          returned_count: 0,
+          elapsed_ms: 0,
+          cancelled: false,
+          hits: [],
+        },
+        subsearchQuery: '',
+        selectedSegId: null,
+      };
+      searchTabs.push(targetTab);
+      activeTabId = targetTab.id;
+    } else {
+      targetTab.query = q;
+      targetTab.title = tabTitle;
+      targetTab.mode = mode;
+      targetTab.layer = layer;
+      targetTab.docId = docId;
+      targetTab.docIds = new Set(selectedDocIds);
+      targetTab.contextWords = contextWords;
+      targetTab.limit = limit;
+      targetTab.data = {
+        query: q,
+        total_matches: 0,
+        returned_count: 0,
+        elapsed_ms: 0,
+        cancelled: false,
+        hits: [],
+      };
+      targetTab.subsearchQuery = '';
+      targetTab.selectedSegId = null;
+    }
+
+    renderTabsBar();
 
     const qs = new URLSearchParams({
       q,
@@ -1837,15 +1954,74 @@ let isSearchInProgress = false;
     });
 
     try {
-      const res = await fetch(`/api/search?${qs.toString()}`, {
+      const res = await fetch(`/api/search/stream?${qs.toString()}`, {
         signal: myAbortController.signal,
       });
-      const data = await res.json();
 
-      // 만약 응답 도착 시점에 더 최신의 새 검색이 시작되었다면 이 결과는 폐기
-      if (mySearchSeq !== currentSearchSeq) {
-        return;
+      if (!res.ok) {
+        throw new Error(`서버 응답 오류 (HTTP ${res.status})`);
       }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buffer = '';
+      let isFirstHit = true;
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop(); // 남아있는 불완전한 줄은 버퍼에 보관
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          let msg = null;
+          try {
+            msg = JSON.parse(line);
+          } catch (_) {
+            continue;
+          }
+
+          if (msg.type === 'start') {
+            kwicResultMeta.innerHTML = `<strong style="color:#2563eb;">⚡ 실시간 검색 중… 검색된 문장이 발견되는 즉시 아래에 표시됩니다. (0건)</strong>`;
+          } else if (msg.type === 'hit' && msg.hit) {
+            // [사용자 핵심 요구사항] 검색된 문장이 검색되자마자 바로 화면에 추가!
+            const hit = msg.hit;
+            targetTab.data.hits.push(hit);
+            targetTab.data.returned_count = targetTab.data.hits.length;
+            targetTab.data.total_matches = msg.matched_count || targetTab.data.hits.length;
+
+            const tempTbody = document.createElement('tbody');
+            tempTbody.innerHTML = createKwicRowHtml(hit);
+            const newRow = tempTbody.firstElementChild;
+            if (newRow) {
+              bindKwicRowItemEvents(newRow, targetTab);
+              kwicTbody.appendChild(newRow);
+
+              // 첫 번째 행이 추가되면 자동으로 상세 뷰어에 로드
+              if (isFirstHit) {
+                isFirstHit = false;
+                newRow.classList.add('selected');
+                targetTab.selectedSegId = hit.segment_id;
+                loadSegmentDetail(hit.segment_id);
+              }
+            }
+
+            kwicResultMeta.innerHTML = `<strong style="color:#2563eb;">⚡ 실시간 검색 중… 현재 ${targetTab.data.hits.length.toLocaleString()}건 발견되어 바로 표시 중</strong>`;
+          } else if (msg.type === 'done') {
+            targetTab.data.total_matches = msg.total_matches || targetTab.data.hits.length;
+            targetTab.data.returned_count = targetTab.data.hits.length;
+            targetTab.data.elapsed_ms = Math.round(msg.elapsed_ms || 0);
+            targetTab.data.cancelled = msg.cancelled || false;
+          } else if (msg.type === 'error') {
+            kwicResultMeta.innerHTML = `<strong style="color:#dc2626;">오류: ${escapeHtml(msg.error)}</strong>`;
+          }
+        }
+      }
+
+      if (mySearchSeq !== currentSearchSeq) return;
 
       isSearchInProgress = false;
       btnCancelSearch.style.display = 'none';
@@ -1855,63 +2031,25 @@ let isSearchInProgress = false;
       }
       currentSearchAbort = null;
 
-      if (data.error) {
-        kwicResultMeta.innerHTML = `<strong style="color:#dc2626;">오류: ${escapeHtml(data.error)}</strong>`;
-        return;
-      }
+      const limitNote = targetTab.limit === '0' ? '무제한' : `최대 ${Number(targetTab.limit).toLocaleString()}건`;
+      const cancelNote = targetTab.data.cancelled ? ' · <strong style="color:#dc2626;">[중단됨: 부분 결과]</strong>' : '';
 
-      // Multi-Tab management: Add new tab (up to 10 tabs)
-      const tabTitle = q || getDocSelectionSummaryLabel();
-      // If active tab exists and had empty query and no results, reuse it; else add new tab
-      let targetTab = null;
-      if (searchTabs.length > 0 && activeTabId) {
-        const curTab = searchTabs.find((t) => t.id === activeTabId);
-        if (curTab && !curTab.query && (!curTab.data || !curTab.data.hits || curTab.data.hits.length === 0)) {
-          targetTab = curTab;
-        }
-      }
-
-      if (targetTab) {
-        targetTab.query = q;
-        targetTab.title = tabTitle;
-        targetTab.mode = mode;
-        targetTab.layer = layer;
-        targetTab.docId = docId;
-        targetTab.docIds = new Set(selectedDocIds);
-        targetTab.contextWords = contextWords;
-        targetTab.limit = limit;
-        targetTab.data = data;
-        targetTab.subsearchQuery = '';
-        targetTab.selectedSegId = data.hits && data.hits[0] ? data.hits[0].segment_id : null;
+      if (targetTab.data.hits.length === 0) {
+        kwicTbody.innerHTML = `
+          <tr>
+            <td colspan="5" style="text-align:center; padding:36px; color:#64748b;">
+              조건에 일치하는 문장이 없습니다.
+            </td>
+          </tr>
+        `;
+        kwicResultMeta.innerHTML = `검색 결과 없음 · 소요시간 <strong>${targetTab.data.elapsed_ms}ms</strong>${cancelNote}`;
       } else {
-        if (searchTabs.length >= 10) {
-          searchTabs.shift(); // Max 10 tabs: remove oldest
-        }
-        const newTab = {
-          id: 'tab_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-          query: q,
-          title: tabTitle,
-          mode,
-          layer,
-          docId,
-          docIds: new Set(selectedDocIds),
-          contextWords,
-          limit,
-          data,
-          subsearchQuery: '',
-          selectedSegId: data.hits && data.hits[0] ? data.hits[0].segment_id : null,
-        };
-        searchTabs.push(newTab);
-        activeTabId = newTab.id;
+        kwicResultMeta.innerHTML = `총 <strong>${targetTab.data.total_matches.toLocaleString()}건</strong> 매칭 (표시 ${targetTab.data.returned_count.toLocaleString()}건 / ${limitNote}) · 소요시간 <strong>${targetTab.data.elapsed_ms}ms</strong>${cancelNote}`;
       }
 
       renderTabsBar();
-      renderActiveTabHits();
     } catch (err) {
-      // 최신 검색이 아닌 이전 검색의 Abort/Error라면 현재 화면을 전혀 건드리지 않고 조용히 폐기
-      if (mySearchSeq !== currentSearchSeq) {
-        return;
-      }
+      if (mySearchSeq !== currentSearchSeq) return;
 
       isSearchInProgress = false;
       btnCancelSearch.style.display = 'none';
@@ -1921,9 +2059,8 @@ let isSearchInProgress = false;
       }
 
       if (err.name === 'AbortError') {
-        // 사용자가 [⏹ 검색 종료] 버튼을 직접 눌렀을 때만 중단 메시지 표시
         if (searchExplicitlyCancelled) {
-          kwicResultMeta.innerHTML = '<strong style="color:#dc2626;">⏹ 검색이 사용자에 의해 중단되었습니다.</strong>';
+          kwicResultMeta.innerHTML = `<strong style="color:#dc2626;">⏹ 검색이 사용자에 의해 중단되었습니다. (현재까지 표시 ${targetTab ? targetTab.data.hits.length : 0}건)</strong>`;
         }
       } else {
         kwicResultMeta.textContent = `검색 오류: ${err.message}`;

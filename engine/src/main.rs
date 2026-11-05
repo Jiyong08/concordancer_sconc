@@ -2163,6 +2163,736 @@ fn handle_search(
     )
 }
 
+
+struct ChannelReader {
+    rx: std::sync::mpsc::Receiver<Vec<u8>>,
+    current: std::io::Cursor<Vec<u8>>,
+}
+
+impl std::io::Read for ChannelReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        loop {
+            let n = self.current.read(buf)?;
+            if n > 0 {
+                return Ok(n);
+            }
+            match self.rx.recv() {
+                Ok(chunk) => {
+                    if chunk.is_empty() {
+                        return Ok(0);
+                    }
+                    self.current = std::io::Cursor::new(chunk);
+                }
+                Err(_) => {
+                    return Ok(0);
+                }
+            }
+        }
+    }
+}
+
+
+fn handle_search_stream(
+    state: &Arc<AppState>,
+    params: &HashMap<String, String>,
+    req: tiny_http::Request,
+) {
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(128);
+    let state_worker = Arc::clone(state);
+    let params_worker = params.clone();
+
+    std::thread::spawn(move || {
+        let t0 = Instant::now();
+        let my_search_seq = state_worker.latest_search_seq.fetch_add(1, Ordering::Relaxed) + 1;
+
+        let raw_query = params_worker.get("q").map(|s| s.as_str()).unwrap_or("");
+        let core_query = raw_query;
+
+        let targets_param = params_worker.get("targets").map(|s| s.as_str()).unwrap_or("");
+        let methods_param = params_worker.get("methods").map(|s| s.as_str()).unwrap_or("");
+        let mode = params_worker.get("mode").map(|s| s.as_str()).unwrap_or("all");
+
+        let mut use_surface = false;
+        let mut use_morph = false;
+        let mut use_sense = false;
+        let mut use_syntax = false;
+
+        if !targets_param.is_empty() {
+            for t in targets_param.split(',') {
+                match t.trim() {
+                    "surface" => use_surface = true,
+                    "morph" => use_morph = true,
+                    "sense" => use_sense = true,
+                    "syntax" => use_syntax = true,
+                    "all" => {
+                        use_surface = true;
+                        use_morph = true;
+                        use_sense = true;
+                        use_syntax = true;
+                    }
+                    _ => {}
+                }
+            }
+        } else {
+            match mode {
+                "all" => {
+                    use_surface = true;
+                    use_morph = true;
+                    use_sense = true;
+                    use_syntax = true;
+                }
+                "surface" | "jamo" | "regex" => use_surface = true,
+                "morph" => use_morph = true,
+                "sense" => use_sense = true,
+                "syntax" => use_syntax = true,
+                _ => use_surface = true,
+            }
+        }
+
+        let mut use_text = false;
+        let mut use_jamo = false;
+        let mut use_regex = false;
+
+        if !methods_param.is_empty() {
+            for m in methods_param.split(',') {
+                match m.trim() {
+                    "text" => use_text = true,
+                    "jamo" => use_jamo = true,
+                    "regex" => use_regex = true,
+                    _ => {}
+                }
+            }
+        } else {
+            match mode {
+                "regex" => use_regex = true,
+                "jamo" => use_jamo = true,
+                _ => {
+                    use_text = true;
+                    if core_query.contains('[') && core_query.contains('/') && core_query.contains(']') {
+                        use_jamo = true;
+                    }
+                }
+            }
+        }
+
+        if !use_surface && !use_morph && !use_sense && !use_syntax {
+            use_surface = true;
+        }
+        if !use_text && !use_jamo && !use_regex {
+            use_text = true;
+        }
+
+        let doc_filter = params_worker.get("doc_id").map(|s| s.as_str()).unwrap_or("ALL");
+        let doc_ids_raw = params_worker.get("doc_ids").map(|s| s.as_str()).unwrap_or("");
+        let selected_doc_ids: Vec<String> = if !doc_ids_raw.is_empty() {
+            doc_ids_raw
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty() && s != "ALL")
+                .collect()
+        } else if doc_filter != "ALL" && !doc_filter.is_empty() {
+            vec![doc_filter.to_string()]
+        } else {
+            Vec::new()
+        };
+        let cat_filter = params_worker.get("category").map(|s| s.as_str()).unwrap_or("ALL");
+        let layer_filter = params_worker.get("layer_filter").map(|s| s.as_str()).unwrap_or("ALL");
+        let context_words: usize = params_worker.get("context_words").and_then(|s| s.parse().ok()).unwrap_or(5);
+
+        let raw_limit: usize = params_worker.get("limit").and_then(|s| s.parse().ok()).unwrap_or(500);
+        let limit: usize = if raw_limit == 0 { usize::MAX } else { raw_limit };
+
+        let norm_query_nfd = state_worker.normalizer.to_nfd_norm(core_query);
+        let norm_query_display = state_worker.normalizer.compose_modern_hangul_for_display(&norm_query_nfd);
+        let norm_query_chars: Vec<char> = norm_query_nfd.chars().collect();
+        let norm_morph_query = state_worker.normalizer.normalize_morph_str(core_query);
+        let bracket_tokens = state_worker.normalizer.parse_bracket_query(core_query);
+
+        // Send start message
+        let start_msg = serde_json::json!({
+            "type": "start",
+            "query": raw_query,
+            "mode": mode,
+            "normalized_query_display": norm_query_display,
+            "limit": limit,
+        });
+        if tx.send(format!("{}
+", start_msg).into_bytes()).is_err() {
+            return;
+        }
+
+        let conn = match Connection::open(&state_worker.db_path) {
+            Ok(c) => c,
+            Err(e) => {
+                let err_msg = serde_json::json!({ "type": "error", "error": e.to_string() });
+                let _ = tx.send(format!("{}
+", err_msg).into_bytes());
+                return;
+            }
+        };
+        state_worker.memory_profile.apply_pragmas(&conn);
+
+        let compiled_regex = if use_regex {
+            let pattern = if bracket_tokens.is_some() {
+                expand_bracket_syntax_to_regex(core_query)
+            } else {
+                core_query.to_string()
+            };
+            match Regex::new(&pattern) {
+                Ok(r) => Some(r),
+                Err(e) => {
+                    let err_msg = serde_json::json!({ "type": "error", "error": format!("정규표현식 오류: {}", e) });
+                    let _ = tx.send(format!("{}
+", err_msg).into_bytes());
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+
+        struct DocMeta {
+            title: String,
+            category: String,
+            layers: String,
+        }
+        let mut doc_meta_map: HashMap<String, DocMeta> = HashMap::new();
+        if let Ok(mut stmt_docs) = conn.prepare("SELECT doc_id, title, corpus_category, annotation_layers FROM documents") {
+            if let Ok(doc_iter) = stmt_docs.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                ))
+            }) {
+                for d in doc_iter.flatten() {
+                    doc_meta_map.insert(d.0, DocMeta { title: d.1, category: d.2, layers: d.3 });
+                }
+            }
+        }
+
+        let mut effective_doc_ids = selected_doc_ids.clone();
+        if cat_filter != "ALL" && !cat_filter.is_empty() {
+            let cat_matched_ids: Vec<String> = doc_meta_map.iter()
+                .filter(|(_, meta)| meta.category.contains(cat_filter))
+                .map(|(id, _)| id.clone())
+                .collect();
+            if effective_doc_ids.is_empty() {
+                effective_doc_ids = cat_matched_ids;
+            } else {
+                effective_doc_ids.retain(|id| cat_matched_ids.contains(id));
+            }
+        }
+
+        let mut sql = String::from(
+            "SELECT s.segment_id, s.doc_id, s.seq_no,
+                    COALESCE(s.sent_id_str, ''), COALESCE(s.page_info, ''), '', COALESCE(s.lang, 'kor'), COALESCE(s.part_type, ''),
+                    s.text_raw, s.text_unicode, s.text_nfd_norm,
+                    COALESCE(s.morph_flat, ''), COALESCE(s.sense_flat, ''), COALESCE(s.syntax_tree, '')
+             FROM segments s
+             WHERE 1=1",
+        );
+        let mut sql_params: Vec<String> = Vec::new();
+
+        if !effective_doc_ids.is_empty() {
+            let placeholders = vec!["?"; effective_doc_ids.len()].join(", ");
+            sql.push_str(&format!(" AND s.doc_id IN ({})", placeholders));
+            for did in &effective_doc_ids {
+                sql_params.push(did.clone());
+            }
+        }
+
+        if !use_surface {
+            let mut target_filters = Vec::new();
+            if use_morph {
+                target_filters.push("COALESCE(s.morph_flat, '') != ''");
+            }
+            if use_sense {
+                target_filters.push("COALESCE(s.sense_flat, '') != ''");
+            }
+            if use_syntax {
+                target_filters.push("COALESCE(s.syntax_tree, '') != ''");
+            }
+            if !target_filters.is_empty() {
+                sql.push_str(&format!(" AND ({})", target_filters.join(" OR ")));
+            }
+        }
+
+        if layer_filter == "TRIPLE" {
+            sql.push_str(" AND COALESCE(s.morph_flat, '') != '' AND COALESCE(s.sense_flat, '') != '' AND COALESCE(s.syntax_tree, '') != ''");
+        } else if layer_filter == "OLD_HANGUL" {
+            let old_ids: Vec<String> = doc_meta_map.iter()
+                .filter(|(_, meta)| meta.category.contains("옛한글"))
+                .map(|(id, _)| id.clone())
+                .collect();
+            if !old_ids.is_empty() {
+                let ph = vec!["?"; old_ids.len()].join(", ");
+                sql.push_str(&format!(" AND s.doc_id IN ({})", ph));
+                for oid in old_ids {
+                    sql_params.push(oid);
+                }
+            }
+        } else if layer_filter == "MORPH" && use_surface {
+            sql.push_str(" AND COALESCE(s.morph_flat, '') != ''");
+        } else if layer_filter == "SENSE" && use_surface {
+            sql.push_str(" AND COALESCE(s.sense_flat, '') != ''");
+        } else if layer_filter == "SYNTAX" && use_surface {
+            sql.push_str(" AND COALESCE(s.syntax_tree, '') != ''");
+        }
+
+        let choseong_only = is_choseong_only_query(&norm_query_chars);
+        if !core_query.is_empty() && !use_regex && mode != "regex" && !choseong_only && bracket_tokens.is_none() {
+            let mut text_likes = Vec::new();
+            if use_surface {
+                text_likes.push("(s.text_nfd_norm LIKE ? OR s.text_unicode LIKE ? OR s.text_raw LIKE ?)");
+                let pat_nfd = format!("%{}%", norm_query_nfd);
+                let pat_raw = format!("%{}%", core_query);
+                sql_params.push(pat_nfd);
+                sql_params.push(pat_raw.clone());
+                sql_params.push(pat_raw);
+            }
+            if use_morph {
+                text_likes.push("s.morph_flat LIKE ?");
+                sql_params.push(format!("%{}%", core_query));
+            }
+            if use_sense {
+                text_likes.push("s.sense_flat LIKE ?");
+                sql_params.push(format!("%{}%", core_query));
+            }
+            if use_syntax {
+                text_likes.push("s.syntax_tree LIKE ?");
+                sql_params.push(format!("%{}%", core_query));
+            }
+            if !text_likes.is_empty() {
+                sql.push_str(&format!(" AND ({})", text_likes.join(" OR ")));
+            }
+        }
+
+        sql.push_str(" ORDER BY s.doc_id ASC, s.seq_no ASC");
+
+        let mut stmt = match conn.prepare(&sql) {
+            Ok(s) => s,
+            Err(e) => {
+                let err_msg = serde_json::json!({ "type": "error", "error": e.to_string() });
+                let _ = tx.send(format!("{}
+", err_msg).into_bytes());
+                return;
+            }
+        };
+
+        let param_refs: Vec<&dyn rusqlite::ToSql> =
+            sql_params.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+
+        let mut returned_count = 0usize;
+        let mut total_matches = 0usize;
+        let mut cancelled = false;
+        let mut scanned_rows = 0usize;
+
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, String>(3).unwrap_or_default(),
+                row.get::<_, String>(4).unwrap_or_default(),
+                row.get::<_, String>(5).unwrap_or_default(),
+                row.get::<_, String>(6).unwrap_or_default(),
+                row.get::<_, String>(7).unwrap_or_default(),
+                row.get::<_, String>(8)?,
+                row.get::<_, String>(9)?,
+                row.get::<_, String>(10)?,
+                row.get::<_, String>(11).unwrap_or_default(),
+                row.get::<_, String>(12).unwrap_or_default(),
+                row.get::<_, String>(13).unwrap_or_default(),
+            ))
+        });
+
+        if let Ok(iter) = rows {
+            for item in iter.flatten() {
+                scanned_rows += 1;
+                if scanned_rows & 63 == 0 {
+                    if state_worker.cancel_search_seq.load(Ordering::Relaxed) >= my_search_seq {
+                        cancelled = true;
+                        break;
+                    }
+                }
+
+                let (
+                    segment_id,
+                    doc_id,
+                    seq_no,
+                    sent_id,
+                    page_ref,
+                    speaker,
+                    lang,
+                    sent_type,
+                    text_raw,
+                    text_unicode,
+                    text_nfd_norm,
+                    morph_flat,
+                    sense_flat,
+                    syntax_tree,
+                ) = item;
+
+                let (doc_title, corpus_category, annotation_layers) = match doc_meta_map.get(&doc_id) {
+                    Some(m) => (m.title.clone(), m.category.clone(), m.layers.clone()),
+                    None => (doc_id.clone(), "원시 말뭉치".to_string(), "원문".to_string()),
+                };
+
+                let display_text = state_worker
+                    .normalizer
+                    .compose_modern_hangul_for_display(&text_unicode);
+
+                // Browse mode if query is empty
+                if core_query.is_empty() {
+                    total_matches += 1;
+                    returned_count += 1;
+
+                    let first_word_len = display_text
+                        .split_whitespace()
+                        .next()
+                        .map(|w| w.chars().count())
+                        .unwrap_or(1);
+                    let (raw_left, node, raw_right, w_cnt, rw_cnt, l_trunc, r_trunc) =
+                        extract_kwic_by_word_count(
+                            &display_text,
+                            0,
+                            first_word_len,
+                            context_words,
+                        );
+                    let (left, node, right) = pad_kwic_context(
+                        &conn,
+                        &doc_id,
+                        seq_no,
+                        raw_left,
+                        node,
+                        raw_right,
+                        w_cnt,
+                        rw_cnt,
+                        context_words,
+                        l_trunc,
+                        r_trunc,
+                    );
+                    let hit = SearchHit {
+                        segment_id,
+                        doc_id,
+                        doc_title,
+                        corpus_category,
+                        annotation_layers,
+                        seq_no,
+                        sent_id,
+                        page_ref,
+                        speaker,
+                        lang,
+                        sent_type,
+                        left_context: left,
+                        node,
+                        right_context: right,
+                        text_raw,
+                        text_unicode: display_text,
+                        has_morph: !morph_flat.is_empty(),
+                        has_sense: !sense_flat.is_empty(),
+                        has_syntax: !syntax_tree.is_empty(),
+                        morph_flat,
+                        sense_flat,
+                        syntax_tree,
+                        match_layer: "문서 열람".to_string(),
+                    };
+
+                    let hit_msg = serde_json::json!({
+                        "type": "hit",
+                        "hit": hit,
+                        "matched_count": total_matches,
+                    });
+                    if tx.send(format!("{}
+", hit_msg).into_bytes()).is_err() {
+                        return; // client closed stream
+                    }
+
+                    if returned_count >= limit {
+                        break;
+                    }
+                    continue;
+                }
+
+                // Matching logic
+                let mut matched_span: Option<(usize, usize, &str)> = None;
+
+                // 1. Surface matching
+                if use_surface && matched_span.is_none() {
+                    if (use_jamo || bracket_tokens.is_some()) && bracket_tokens.is_some() {
+                        let b_tokens = bracket_tokens.as_ref().unwrap();
+                        let units = state_worker.normalizer.tokenize_text_units(&display_text);
+                        if let Some((sc, ec)) = find_bracket_query_match(b_tokens, &units) {
+                            matched_span = Some((sc, ec, "원문/자소"));
+                        }
+                    }
+
+                    if use_regex && compiled_regex.is_some() && matched_span.is_none() {
+                        let re = compiled_regex.as_ref().unwrap();
+                        if let Some(m) = re.find(&display_text) {
+                            let start_c = display_text[..m.start()].chars().count();
+                            let end_c = start_c + display_text[m.start()..m.end()].chars().count();
+                            matched_span = Some((start_c, end_c, "원문/정규식"));
+                        } else if let Some(_m) = re.find(&text_nfd_norm) {
+                            matched_span = Some((0, display_text.chars().count().min(8), "원문/정규식(NFD)"));
+                        }
+                    }
+
+                    if use_text && matched_span.is_none() {
+                        let (norm_chars, char_map) = state_worker.normalizer.to_nfd_norm_with_map(&display_text);
+                        let candidates = find_all_char_subslices(&norm_chars, &norm_query_chars);
+
+                        for (n_start, n_end) in candidates {
+                            if !use_jamo {
+                                if n_end < norm_chars.len() && is_jongseong_jamo(norm_chars[n_end]) {
+                                    continue;
+                                }
+                            }
+                            let orig_start = char_map.get(n_start).copied().unwrap_or(0);
+                            let orig_end = char_map
+                                .get(n_end.saturating_sub(1))
+                                .map(|&idx| idx + 1)
+                                .unwrap_or(orig_start + 1);
+                            matched_span = Some((orig_start, orig_end, "원문/음절"));
+                            break;
+                        }
+
+                        if matched_span.is_none() && text_raw.contains(core_query) {
+                            if let Some(byte_pos) = display_text.find(core_query) {
+                                let sc = display_text[..byte_pos].chars().count();
+                                let ec = sc + core_query.chars().count();
+                                matched_span = Some((sc, ec, "원문(PUA)"));
+                            } else {
+                                matched_span = Some((0, display_text.chars().count().min(6), "원문(PUA)"));
+                            }
+                        }
+                    }
+                }
+
+                // 2. Morpheme layer matching
+                if use_morph && matched_span.is_none() && !morph_flat.is_empty() {
+                    let eojeol_analyses: Vec<&str> = morph_flat.split(" | ").collect();
+                    let words: Vec<&str> = display_text.split_whitespace().collect();
+
+                    if (use_jamo || bracket_tokens.is_some()) && bracket_tokens.is_some() {
+                        let b_tokens = bracket_tokens.as_ref().unwrap();
+                        for (idx, ea) in eojeol_analyses.iter().enumerate() {
+                            let ea_units = state_worker.normalizer.tokenize_text_units(ea);
+                            if find_bracket_query_match(b_tokens, &ea_units).is_some() {
+                                if let Some(&w) = words.get(idx) {
+                                    if let Some(byte_pos) = display_text.find(w) {
+                                        let sc = display_text[..byte_pos].chars().count();
+                                        let ec = sc + w.chars().count();
+                                        matched_span = Some((sc, ec, "형태소/자소"));
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if use_regex && compiled_regex.is_some() && matched_span.is_none() {
+                        let re = compiled_regex.as_ref().unwrap();
+                        for (idx, ea) in eojeol_analyses.iter().enumerate() {
+                            if re.is_match(ea) {
+                                if let Some(&w) = words.get(idx) {
+                                    if let Some(byte_pos) = display_text.find(w) {
+                                        let sc = display_text[..byte_pos].chars().count();
+                                        let ec = sc + w.chars().count();
+                                        matched_span = Some((sc, ec, "형태소/정규식"));
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if use_text && matched_span.is_none() {
+                        let norm_m = state_worker.normalizer.normalize_morph_str(&morph_flat);
+                        if norm_m.contains(&norm_morph_query) || morph_flat.contains(core_query) {
+                            for (idx, ea) in eojeol_analyses.iter().enumerate() {
+                                if state_worker.normalizer.normalize_morph_str(ea).contains(&norm_morph_query) || ea.contains(core_query) {
+                                    if let Some(&w) = words.get(idx) {
+                                        if let Some(byte_pos) = display_text.find(w) {
+                                            let sc = display_text[..byte_pos].chars().count();
+                                            let ec = sc + w.chars().count();
+                                            matched_span = Some((sc, ec, "형태분석"));
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 3. Sense layer matching
+                if use_sense && matched_span.is_none() && !sense_flat.is_empty() {
+                    let eojeol_analyses: Vec<&str> = sense_flat.split(" | ").collect();
+                    let words: Vec<&str> = display_text.split_whitespace().collect();
+
+                    if (use_jamo || bracket_tokens.is_some()) && bracket_tokens.is_some() {
+                        let b_tokens = bracket_tokens.as_ref().unwrap();
+                        for (idx, ea) in eojeol_analyses.iter().enumerate() {
+                            let ea_units = state_worker.normalizer.tokenize_text_units(ea);
+                            if find_bracket_query_match(b_tokens, &ea_units).is_some() {
+                                if let Some(&w) = words.get(idx) {
+                                    if let Some(byte_pos) = display_text.find(w) {
+                                        let sc = display_text[..byte_pos].chars().count();
+                                        let ec = sc + w.chars().count();
+                                        matched_span = Some((sc, ec, "형태의미/자소"));
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if use_regex && compiled_regex.is_some() && matched_span.is_none() {
+                        let re = compiled_regex.as_ref().unwrap();
+                        for (idx, ea) in eojeol_analyses.iter().enumerate() {
+                            if re.is_match(ea) {
+                                if let Some(&w) = words.get(idx) {
+                                    if let Some(byte_pos) = display_text.find(w) {
+                                        let sc = display_text[..byte_pos].chars().count();
+                                        let ec = sc + w.chars().count();
+                                        matched_span = Some((sc, ec, "형태의미/정규식"));
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if use_text && matched_span.is_none() {
+                        let norm_s = state_worker.normalizer.normalize_morph_str(&sense_flat);
+                        if norm_s.contains(&norm_morph_query) || sense_flat.contains(core_query) {
+                            for (idx, ea) in eojeol_analyses.iter().enumerate() {
+                                if state_worker.normalizer.normalize_morph_str(ea).contains(&norm_morph_query) || ea.contains(core_query) {
+                                    if let Some(&w) = words.get(idx) {
+                                        if let Some(byte_pos) = display_text.find(w) {
+                                            let sc = display_text[..byte_pos].chars().count();
+                                            let ec = sc + w.chars().count();
+                                            matched_span = Some((sc, ec, "형태의미"));
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 4. Syntax layer matching
+                if use_syntax && matched_span.is_none() && !syntax_tree.is_empty() {
+                    if use_regex && compiled_regex.is_some() {
+                        let re = compiled_regex.as_ref().unwrap();
+                        if re.is_match(&syntax_tree) {
+                            matched_span = Some((0, display_text.chars().count().min(10), "구문/정규식"));
+                        }
+                    }
+                    if use_text && matched_span.is_none() && syntax_tree.contains(core_query) {
+                        matched_span = Some((0, display_text.chars().count().min(10), "구문표지"));
+                    }
+                }
+
+                // Hit found!
+                if let Some((match_start, match_end, layer_name)) = matched_span {
+                    total_matches += 1;
+                    returned_count += 1;
+
+                    let (raw_left, node, raw_right, w_cnt, rw_cnt, l_trunc, r_trunc) =
+                        extract_kwic_by_word_count(
+                            &display_text,
+                            match_start,
+                            match_end,
+                            context_words,
+                        );
+                    let (left, node, right) = pad_kwic_context(
+                        &conn,
+                        &doc_id,
+                        seq_no,
+                        raw_left,
+                        node,
+                        raw_right,
+                        w_cnt,
+                        rw_cnt,
+                        context_words,
+                        l_trunc,
+                        r_trunc,
+                    );
+                    let hit = SearchHit {
+                        segment_id,
+                        doc_id,
+                        doc_title,
+                        corpus_category,
+                        annotation_layers,
+                        seq_no,
+                        sent_id,
+                        page_ref,
+                        speaker,
+                        lang,
+                        sent_type,
+                        left_context: left,
+                        node,
+                        right_context: right,
+                        text_raw,
+                        text_unicode: display_text,
+                        has_morph: !morph_flat.is_empty(),
+                        has_sense: !sense_flat.is_empty(),
+                        has_syntax: !syntax_tree.is_empty(),
+                        morph_flat,
+                        sense_flat,
+                        syntax_tree,
+                        match_layer: layer_name.to_string(),
+                    };
+
+                    // [핵심] 검색된 즉시 실시간 스트리밍 전송!
+                    let hit_msg = serde_json::json!({
+                        "type": "hit",
+                        "hit": hit,
+                        "matched_count": total_matches,
+                    });
+                    if tx.send(format!("{}
+", hit_msg).into_bytes()).is_err() {
+                        return; // client closed connection
+                    }
+
+                    if returned_count >= limit {
+                        break;
+                    }
+                }
+            }
+        }
+
+        let elapsed = t0.elapsed().as_secs_f64() * 1000.0;
+        let done_msg = serde_json::json!({
+            "type": "done",
+            "total_matches": total_matches,
+            "returned_count": returned_count,
+            "elapsed_ms": elapsed,
+            "cancelled": cancelled,
+        });
+        let _ = tx.send(format!("{}
+", done_msg).into_bytes());
+    });
+
+    let reader = ChannelReader {
+        rx,
+        current: std::io::Cursor::new(Vec::new()),
+    };
+    let headers = vec![
+        Header::from_bytes(&b"Content-Type"[..], &b"application/x-ndjson; charset=utf-8"[..]).unwrap(),
+        Header::from_bytes(&b"Cache-Control"[..], &b"no-cache, no-transform"[..]).unwrap(),
+        Header::from_bytes(&b"Connection"[..], &b"keep-alive"[..]).unwrap(),
+        Header::from_bytes(&b"Access-Control-Allow-Origin"[..], &b"*"[..]).unwrap(),
+    ];
+    let resp = Response::new(StatusCode(200), headers, reader, None, None);
+    let _ = req.respond(resp);
+}
+
 fn handle_segment_detail(
     state: &AppState,
     params: &HashMap<String, String>,
@@ -3398,6 +4128,10 @@ fn main() {
             let resp = match (req.method(), path_part) {
                 (&Method::Get, "/api/overview") => handle_overview(&state),
                 (&Method::Get, "/api/search") => handle_search(&state, &params),
+                (&Method::Get, "/api/search/stream") => {
+                    handle_search_stream(&state, &params, req);
+                    return;
+                },
                 (&Method::Post, "/api/search/cancel") => handle_search_cancel(&state),
                 (&Method::Get, "/api/segment") => handle_segment_detail(&state, &params),
                 (&Method::Get, "/api/source-jump") => handle_source_jump(&state, &params),
