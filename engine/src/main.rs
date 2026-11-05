@@ -1655,19 +1655,33 @@ fn handle_search(
 
     let choseong_only = is_choseong_only_query(&norm_query_chars);
     if !core_query.is_empty() && !use_regex && mode != "regex" && !choseong_only && bracket_tokens.is_none() {
-        if use_surface && !use_morph && !use_sense && !use_syntax {
-            sql.push_str(
-                " AND (s.text_nfd_norm LIKE ? OR s.text_unicode LIKE ? OR s.text_raw LIKE ?)",
-            );
+        let mut text_likes = Vec::new();
+        if use_surface {
+            text_likes.push("(s.text_nfd_norm LIKE ? OR s.text_unicode LIKE ? OR s.text_raw LIKE ?)");
             let pat_nfd = format!("%{}%", norm_query_nfd);
             let pat_raw = format!("%{}%", core_query);
             sql_params.push(pat_nfd);
             sql_params.push(pat_raw.clone());
             sql_params.push(pat_raw);
         }
+        if use_morph {
+            text_likes.push("s.morph_flat LIKE ?");
+            sql_params.push(format!("%{}%", core_query));
+        }
+        if use_sense {
+            text_likes.push("s.sense_flat LIKE ?");
+            sql_params.push(format!("%{}%", core_query));
+        }
+        if use_syntax {
+            text_likes.push("s.syntax_tree LIKE ?");
+            sql_params.push(format!("%{}%", core_query));
+        }
+        if !text_likes.is_empty() {
+            sql.push_str(&format!(" AND ({})", text_likes.join(" OR ")));
+        }
     }
 
-    sql.push_str(" ORDER BY s.segment_id ASC");
+    sql.push_str(" ORDER BY s.doc_id ASC, s.seq_no ASC");
 
     let mut stmt = match conn.prepare(&sql) {
         Ok(s) => s,

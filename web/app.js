@@ -866,6 +866,18 @@ let isSearchInProgress = false;
         updateDocModalCounters();
       });
     });
+
+    // 4. File item row click (행 전체 클릭 시 체크박스 토글)
+    docTreeContainer.querySelectorAll('.doc-file-item').forEach((item) => {
+      item.addEventListener('click', (e) => {
+        if (e.target.classList.contains('doc-file-chk') || e.target.type === 'checkbox') return;
+        const chk = item.querySelector('.doc-file-chk');
+        if (chk) {
+          chk.checked = !chk.checked;
+          chk.dispatchEvent(new Event('change'));
+        }
+      });
+    });
   }
 
   function openDocSelectorModal() {
