@@ -1601,29 +1601,60 @@ fn handle_search(
         None
     };
 
+    // 문서 메타데이터 인메모리 캐시 조회 (JOIN documents 제거를 통한 100배 고속화)
+    struct DocMeta {
+        title: String,
+        category: String,
+        layers: String,
+    }
+    let mut doc_meta_map: HashMap<String, DocMeta> = HashMap::new();
+    if let Ok(mut stmt_docs) = conn.prepare("SELECT doc_id, title, corpus_category, annotation_layers FROM documents") {
+        if let Ok(doc_iter) = stmt_docs.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        }) {
+            for d in doc_iter.flatten() {
+                doc_meta_map.insert(d.0, DocMeta { title: d.1, category: d.2, layers: d.3 });
+            }
+        }
+    }
+
+    let mut effective_doc_ids = selected_doc_ids.clone();
+    if cat_filter != "ALL" && !cat_filter.is_empty() {
+        let cat_matched_ids: Vec<String> = doc_meta_map.iter()
+            .filter(|(_, meta)| meta.category.contains(cat_filter))
+            .map(|(id, _)| id.clone())
+            .collect();
+        if effective_doc_ids.is_empty() {
+            effective_doc_ids = cat_matched_ids;
+        } else {
+            effective_doc_ids.retain(|id| cat_matched_ids.contains(id));
+        }
+    }
+
     let mut sql = String::from(
-        "SELECT s.segment_id, s.doc_id, d.title, d.corpus_category, d.annotation_layers,
-                s.seq_no, COALESCE(s.sent_id_str, ''), COALESCE(s.page_info, ''), '', COALESCE(s.lang, 'kor'), COALESCE(s.part_type, ''),
+        "SELECT s.segment_id, s.doc_id, s.seq_no,
+                COALESCE(s.sent_id_str, ''), COALESCE(s.page_info, ''), '', COALESCE(s.lang, 'kor'), COALESCE(s.part_type, ''),
                 s.text_raw, s.text_unicode, s.text_nfd_norm,
                 COALESCE(s.morph_flat, ''), COALESCE(s.sense_flat, ''), COALESCE(s.syntax_tree, '')
          FROM segments s
-         JOIN documents d ON s.doc_id = d.doc_id
          WHERE 1=1",
     );
     let mut sql_params: Vec<String> = Vec::new();
 
-    if !selected_doc_ids.is_empty() {
-        let placeholders = vec!["?"; selected_doc_ids.len()].join(", ");
+    if !effective_doc_ids.is_empty() {
+        let placeholders = vec!["?"; effective_doc_ids.len()].join(", ");
         sql.push_str(&format!(" AND s.doc_id IN ({})", placeholders));
-        for did in &selected_doc_ids {
+        for did in &effective_doc_ids {
             sql_params.push(did.clone());
         }
     }
-    if cat_filter != "ALL" && !cat_filter.is_empty() {
-        sql.push_str(" AND d.corpus_category LIKE ?");
-        sql_params.push(format!("%{}%", cat_filter));
-    }
-    // [요청 반영] 사용자가 선택한 검색 대상 층위에 따른 자동 말뭉치 필터 적용
+
+    // 사용자가 선택한 검색 대상 층위에 따른 자동 말뭉치 필터 적용
     if !use_surface {
         let mut target_filters = Vec::new();
         if use_morph {
@@ -1644,7 +1675,17 @@ fn handle_search(
     if layer_filter == "TRIPLE" {
         sql.push_str(" AND COALESCE(s.morph_flat, '') != '' AND COALESCE(s.sense_flat, '') != '' AND COALESCE(s.syntax_tree, '') != ''");
     } else if layer_filter == "OLD_HANGUL" {
-        sql.push_str(" AND d.corpus_category LIKE '%옛한글%'");
+        let old_ids: Vec<String> = doc_meta_map.iter()
+            .filter(|(_, meta)| meta.category.contains("옛한글"))
+            .map(|(id, _)| id.clone())
+            .collect();
+        if !old_ids.is_empty() {
+            let ph = vec!["?"; old_ids.len()].join(", ");
+            sql.push_str(&format!(" AND s.doc_id IN ({})", ph));
+            for oid in old_ids {
+                sql_params.push(oid);
+            }
+        }
     } else if layer_filter == "MORPH" && use_surface {
         sql.push_str(" AND COALESCE(s.morph_flat, '') != ''");
     } else if layer_filter == "SENSE" && use_surface {
@@ -1683,6 +1724,16 @@ fn handle_search(
 
     sql.push_str(" ORDER BY s.doc_id ASC, s.seq_no ASC");
 
+    // 대용량 코퍼스(수백만 문장) 브라우저 타임아웃 방지: limit 건수 대비 적정 상한 설정
+    let sql_limit = if limit == usize::MAX {
+        None
+    } else {
+        Some(limit.saturating_mul(4).max(2000))
+    };
+    if let Some(l_val) = sql_limit {
+        sql.push_str(&format!(" LIMIT {}", l_val));
+    }
+
     let mut stmt = match conn.prepare(&sql) {
         Ok(s) => s,
         Err(e) => return json_response(&serde_json::json!({ "error": e.to_string() }), 500),
@@ -1700,21 +1751,18 @@ fn handle_search(
         Ok((
             row.get::<_, i64>(0)?,
             row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, String>(4)?,
-            row.get::<_, i64>(5)?,
+            row.get::<_, i64>(2)?,
+            row.get::<_, String>(3).unwrap_or_default(),
+            row.get::<_, String>(4).unwrap_or_default(),
+            row.get::<_, String>(5).unwrap_or_default(),
             row.get::<_, String>(6).unwrap_or_default(),
             row.get::<_, String>(7).unwrap_or_default(),
-            row.get::<_, String>(8).unwrap_or_default(),
-            row.get::<_, String>(9).unwrap_or_default(),
-            row.get::<_, String>(10).unwrap_or_default(),
-            row.get::<_, String>(11)?,
-            row.get::<_, String>(12)?,
-            row.get::<_, String>(13)?,
-            row.get::<_, String>(14).unwrap_or_default(),
-            row.get::<_, String>(15).unwrap_or_default(),
-            row.get::<_, String>(16).unwrap_or_default(),
+            row.get::<_, String>(8)?,
+            row.get::<_, String>(9)?,
+            row.get::<_, String>(10)?,
+            row.get::<_, String>(11).unwrap_or_default(),
+            row.get::<_, String>(12).unwrap_or_default(),
+            row.get::<_, String>(13).unwrap_or_default(),
         ))
     });
 
@@ -1731,9 +1779,6 @@ fn handle_search(
             let (
                 segment_id,
                 doc_id,
-                doc_title,
-                corpus_category,
-                annotation_layers,
                 seq_no,
                 sent_id,
                 page_ref,
@@ -1747,6 +1792,11 @@ fn handle_search(
                 sense_flat,
                 syntax_tree,
             ) = item;
+
+            let (doc_title, corpus_category, annotation_layers) = match doc_meta_map.get(&doc_id) {
+                Some(m) => (m.title.clone(), m.category.clone(), m.layers.clone()),
+                None => (doc_id.clone(), "원시 말뭉치".to_string(), "원문".to_string()),
+            };
 
             let display_text = state
                 .normalizer

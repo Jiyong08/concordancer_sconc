@@ -978,6 +978,19 @@ let isSearchInProgress = false;
       }
       updateDocSelectorTriggerLabel();
       closeDocSelectorModal();
+
+      // 원시 말뭉치 선택 시 의미 주석 검색어 '세계__02' 자동 초기화 및 자동 검색 실행
+      if (searchInput.value === '세계__02') {
+        const hasSense = Array.from(selectedDocIds).some(id => {
+          const doc = globalDocuments.find(d => d.doc_id === id);
+          return doc && doc.annotation_layers && doc.annotation_layers.includes('의미');
+        });
+        if (!hasSense) {
+          searchInput.value = '';
+          automata.reset();
+        }
+      }
+      runSearch();
     });
   }
 
