@@ -307,6 +307,34 @@
               </div>
             </div>
 
+            <!-- 실시간 진척도 (%) 카드 -->
+            <div id="builder-progress-card" style="display:none; margin-top:16px; padding:16px; background:#f8fafc; border:1px solid #bfdbfe; border-radius:8px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                <div style="display:flex; align-items:center; gap:8px;">
+                  <span class="pulse-indicator">⚡</span>
+                  <strong style="font-size:0.95rem; color:#1e3a8a;">말뭉치 DB 변환 및 인덱싱 진행 중...</strong>
+                </div>
+                <div style="display:flex; align-items:center; gap:12px;">
+                  <span id="builder-progress-pct" style="font-size:1.4rem; font-weight:800; color:#2563eb;">0.0%</span>
+                  <button type="button" class="btn btn-outline" id="btn-stop-build" style="padding:3px 10px; font-size:0.75rem; color:#dc2626; border-color:#fca5a5;">
+                    ⏹️ 중단
+                  </button>
+                </div>
+              </div>
+              <!-- 대형 프로그레스 바 -->
+              <div style="width:100%; height:12px; background:#e2e8f0; border-radius:6px; overflow:hidden; margin-bottom:10px;">
+                <div id="builder-progress-bar" style="width:0%; height:100%; background:linear-gradient(90deg, #3b82f6, #2563eb); border-radius:6px; transition:width 0.2s ease;"></div>
+              </div>
+              <div style="display:flex; justify-content:space-between; font-size:0.8rem; color:#475569; margin-bottom:10px;">
+                <span id="builder-progress-current-file">현재 파일: -</span>
+                <span id="builder-progress-stats">파일: 0/0 · 문장: 0개 · 어절: 0개</span>
+              </div>
+              <!-- 실시간 콘솔 로그 박스 -->
+              <div id="builder-progress-log" style="background:#0f172a; color:#e2e8f0; font-family:Consolas, monospace; font-size:0.75rem; padding:10px; border-radius:6px; max-height:140px; overflow-y:auto; line-height:1.4;">
+                <div>[대기] 작업을 시작합니다...</div>
+              </div>
+            </div>
+
             <!-- 구축 진행 로그 및 결과 요약 -->
             <div id="builder-result-area" style="margin-top:18px; display:none;">
               <div class="builder-summary-banner" id="builder-summary-banner"></div>

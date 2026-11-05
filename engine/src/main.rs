@@ -3227,7 +3227,8 @@ fn handle_build_db(
     let target_db_str = target_db.to_string_lossy().into_owned();
 
     let mut cmd = Command::new("python");
-    cmd.env("PYTHONUTF8", "1")
+    cmd.current_dir(&state.root_dir)
+        .env("PYTHONUTF8", "1")
         .args([
             py_script.to_str().unwrap_or("corpus_builder.py"),
             "--folder",
@@ -4191,10 +4192,10 @@ fn main() {
                 (&Method::Get, "/api/system/switch-browser") | (&Method::Post, "/api/system/switch-browser") => handle_switch_browser(&state, &params),
                 (&Method::Get, "/api/document/delete") | (&Method::Post, "/api/document/delete") => handle_document_delete(&state, &params),
                 (&Method::Post, "/api/segment/edit") => handle_segment_edit(&state, &mut req),
-                (&Method::Post, "/api/build-db") => handle_build_db(&state, &mut req),
-                (&Method::Get, "/api/build-db/status") => handle_build_db_status(&state),
-                (&Method::Post, "/api/build-db/stop") => handle_build_db_stop(&state),
-                (&Method::Post, "/api/build-db/cancel") => handle_build_db_cancel(&state),
+                (&Method::Post, "/api/build-db") | (&Method::Post, "/api/build_db") => handle_build_db(&state, &mut req),
+                (&Method::Get, "/api/build-db/status") | (&Method::Get, "/api/build_db/status") => handle_build_db_status(&state),
+                (&Method::Post, "/api/build-db/stop") | (&Method::Post, "/api/build_db/stop") => handle_build_db_stop(&state),
+                (&Method::Post, "/api/build-db/cancel") | (&Method::Post, "/api/build_db/cancel") => handle_build_db_cancel(&state),
                 (&Method::Get, "/api/export/mapping.tsv") => serve_static_file(
                     &state.root_dir.join("db").join("corpus_db_mapping.tsv"),
                     "text/tab-separated-values; charset=utf-8",

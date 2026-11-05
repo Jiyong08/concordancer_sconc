@@ -536,6 +536,10 @@ let isSearchInProgress = false;
         });
       });
 
+      // [요청 1 반영] 문서 목록 체크박스 Shift 범위 다중선택 바인딩
+      bindDocRowCheckboxEvents();
+      updateSelectedDocsDeleteBtnCount();
+
       // [요청 반영 1] 프로그램 구동 시 자동 검색 비활성화 (사용자가 검색 버튼을 누를 때만 실행)
       searchInput.value = '';
       kwicResultMeta.textContent = '검색어를 입력하거나 특정 문서를 선택한 후 [🔍 검색]을 누르세요.';
@@ -1635,7 +1639,152 @@ let isSearchInProgress = false;
     applyTopCollapse(true);
   }
 
-  // 2. Folder-based DB Builder
+  // =========================================================================
+  // [요청 2, 3 반영] 말뭉치 폴더 지정 DB 생성 실시간 진행률 (%) 비동기 폴링 & UI
+  // =========================================================================
+  const builderProgressCard = document.getElementById('builder-progress-card');
+  const builderProgressPct = document.getElementById('builder-progress-pct');
+  const builderProgressBar = document.getElementById('builder-progress-bar');
+  const builderProgressCurrentFile = document.getElementById('builder-progress-current-file');
+  const builderProgressStats = document.getElementById('builder-progress-stats');
+  const builderProgressLog = document.getElementById('builder-progress-log');
+  const btnStopBuild = document.getElementById('btn-stop-build');
+  const globalBuildTracker = document.getElementById('global-build-tracker');
+  const globalTrackerText = document.getElementById('global-tracker-text');
+  const globalTrackerBar = document.getElementById('global-tracker-bar');
+
+  let buildPollingTimer = null;
+
+  function stopBuildPolling() {
+    if (buildPollingTimer) {
+      clearInterval(buildPollingTimer);
+      buildPollingTimer = null;
+    }
+  }
+
+  // 상단 글로벌 트래커 클릭 시 DB 생성 탭으로 이동
+  if (globalBuildTracker) {
+    globalBuildTracker.addEventListener('click', () => {
+      const tabBtn = document.querySelector('.nav-tab[data-tab="tab-build-db"]');
+      if (tabBtn) tabBtn.click();
+    });
+  }
+
+  // 중단 버튼 클릭
+  if (btnStopBuild) {
+    btnStopBuild.addEventListener('click', async () => {
+      if (!confirm('현재 진행 중인 DB 생성을 중단하시겠습니까?\n(현재까지 변환된 문서는 DB에 보존됩니다)')) return;
+      try {
+        btnStopBuild.disabled = true;
+        const res = await fetch('/api/build-db/stop', { method: 'POST' });
+        const data = await res.json();
+        alert(data.message || 'DB 생성이 중단되었습니다.');
+      } catch (e) {
+        alert('중단 요청 실패: ' + e.message);
+      } finally {
+        btnStopBuild.disabled = false;
+      }
+    });
+  }
+
+  function startBuildPolling() {
+    stopBuildPolling();
+    btnStartBuild.disabled = true;
+    if (builderProgressCard) builderProgressCard.style.display = 'block';
+    if (builderResultArea) builderResultArea.style.display = 'none';
+    if (globalBuildTracker) globalBuildTracker.style.display = 'flex';
+
+    buildPollingTimer = setInterval(async () => {
+      try {
+        const res = await fetch('/api/build-db/status');
+        if (!res.ok) return;
+        const prog = await res.json();
+
+        // 1. 진행률 % 및 게이지 업데이트
+        const pct = typeof prog.percent === 'number' ? Math.min(Math.max(prog.percent, 0), 100) : 0;
+        const pctStr = pct.toFixed(1) + '%';
+        if (builderProgressPct) builderProgressPct.textContent = pctStr;
+        if (builderProgressBar) builderProgressBar.style.width = pctStr;
+
+        // 상단 전역 배지 업데이트
+        if (globalTrackerText) {
+          const shortFile = prog.current_file ? ` (${prog.current_file.slice(0, 15)})` : '';
+          globalTrackerText.textContent = `DB 구축 중: ${pctStr}${shortFile}`;
+        }
+        if (globalTrackerBar) globalTrackerBar.style.width = pctStr;
+
+        // 2. 현재 파일명 및 세부 통계 업데이트
+        if (builderProgressCurrentFile) {
+          builderProgressCurrentFile.textContent = prog.current_file ? `현재 처리 중: ${prog.current_file}` : '폴더 내 파일 스캔 중...';
+        }
+        if (builderProgressStats) {
+          const sents = (prog.sentences_imported || 0).toLocaleString();
+          const eojeols = (prog.eojeols_imported || 0).toLocaleString();
+          builderProgressStats.textContent = `파일: ${prog.processed_files || 0} / ${prog.total_files || 0} · 문장: ${sents}개 · 어절: ${eojeols}개`;
+        }
+
+        // 3. 실시간 로그 출력
+        if (builderProgressLog && Array.isArray(prog.log_lines)) {
+          const lines = prog.log_lines.slice(-50);
+          builderProgressLog.innerHTML = lines.map(l => `<div>${escapeHtml(l)}</div>`).join('');
+          builderProgressLog.scrollTop = builderProgressLog.scrollHeight;
+        }
+
+        // 4. 상태 완료/오류/중단 감지
+        if (prog.status === 'COMPLETED') {
+          stopBuildPolling();
+          btnStartBuild.disabled = false;
+          if (builderProgressPct) builderProgressPct.textContent = '100.0%';
+          if (builderProgressBar) builderProgressBar.style.width = '100%';
+          if (globalBuildTracker) globalBuildTracker.style.display = 'none';
+
+          // 결과 요약 배너 표시
+          const summary = prog.result_summary || {};
+          const sents = (prog.sentences_imported || summary.sentences_imported || 0).toLocaleString();
+          const eojeols = (prog.eojeols_imported || summary.eojeols_imported || 0).toLocaleString();
+          const docsCount = (prog.newly_created_doc_ids && prog.newly_created_doc_ids.length) || summary.documents_created || 0;
+
+          if (builderSummaryBanner) {
+            builderSummaryBanner.innerHTML = `
+              <strong>🎉 데이터베이스 생성이 성공적으로 완료되었습니다!</strong><br/>
+              대상 DB: <code>${escapeHtml(prog.target_db_path || 'concordance.corpdb')}</code><br/>
+              처리 완료 파일: <strong>${prog.total_files || 0}개</strong> · 등록된 말뭉치: <strong>${docsCount}개</strong> · 총 구축 문장: <strong>${sents}개</strong> (${eojeols}어절)
+            `;
+          }
+
+          if (builderItemsTbody && summary.items) {
+            builderItemsTbody.innerHTML = (summary.items || []).map(item => `
+              <tr>
+                <td><code><strong>${escapeHtml(item.doc_id)}</strong></code></td>
+                <td><span class="layer-badge badge-old">${escapeHtml(item.type)}</span></td>
+                <td><code>${escapeHtml((item.files || []).join(', '))}</code></td>
+                <td style="text-align:right; font-weight:700;">${(item.sentences || 0).toLocaleString()}문장</td>
+              </tr>
+            `).join('');
+          }
+          if (builderResultArea) builderResultArea.style.display = 'block';
+
+          // [핵심] 구축된 DB를 즉시 반영하여 '문서지정' 탭과 검색기 목록 새로고침
+          await loadOverview();
+          alert(`🎉 데이터베이스 생성이 완료되었습니다!\n\n총 ${prog.total_files || 0}개 파일 중 ${docsCount}개 말뭉치 (${sents}문장)가 DB에 성공적으로 등록되었습니다.\n지금 바로 검색하거나 '문서지정' 탭에서 확인하실 수 있습니다.`);
+        } else if (prog.status === 'ERROR') {
+          stopBuildPolling();
+          btnStartBuild.disabled = false;
+          if (globalBuildTracker) globalBuildTracker.style.display = 'none';
+          alert(`데이터베이스 구축 오류:\n${prog.error_message || '생성 도중 오류가 발생했습니다.'}`);
+        } else if (prog.status === 'STOPPED' || prog.status === 'CANCELLED') {
+          stopBuildPolling();
+          btnStartBuild.disabled = false;
+          if (globalBuildTracker) globalBuildTracker.style.display = 'none';
+          await loadOverview();
+        }
+      } catch (err) {
+        console.warn('Build progress polling error:', err);
+      }
+    }, 250);
+  }
+
+  // 2. Folder-based DB Builder 시작 리스너
   btnStartBuild.addEventListener('click', async () => {
     const folderPath = builderFolderPath.value.trim();
     const dbName = builderDbName.value.trim();
@@ -1646,9 +1795,10 @@ let isSearchInProgress = false;
     }
 
     btnStartBuild.disabled = true;
-    builderStatusBadge.style.display = 'inline-block';
-    builderStatusBadge.innerHTML = '⏳ 지정한 폴더 내 파일 형식 분석 및 데이터베이스 생성 중… (수 초~수십 초 소요)';
-    builderResultArea.style.display = 'none';
+    if (builderStatusBadge) {
+      builderStatusBadge.style.display = 'inline-block';
+      builderStatusBadge.innerHTML = '⏳ 말뭉치 폴더 스캔 및 데이터베이스 생성 프로세스 시작 중…';
+    }
 
     try {
       const res = await fetch('/api/build-db', {
@@ -1657,43 +1807,35 @@ let isSearchInProgress = false;
         body: JSON.stringify({ folder_path: folderPath, db_name: dbName }),
       });
       const data = await res.json();
-      btnStartBuild.disabled = false;
-      builderStatusBadge.style.display = 'none';
+      if (builderStatusBadge) builderStatusBadge.style.display = 'none';
 
       if (data.error) {
+        btnStartBuild.disabled = false;
         alert(`데이터베이스 구축 오류:\n${data.error}`);
         return;
       }
 
-      builderSummaryBanner.innerHTML = `
-        <strong>🎉 데이터베이스 생성 완료!</strong><br/>
-        폴더: <code>${escapeHtml(data.folder)}</code> → 대상 DB: <code>${escapeHtml(data.db_path)}</code><br/>
-        스캔 파일: <strong>${data.total_files_scanned}개</strong> · 신규 통합 문서: <strong>${data.documents_created}개</strong> · 추출 문장: <strong>${(data.sentences_imported || 0).toLocaleString()}개</strong> (${(data.eojeols_imported || 0).toLocaleString()}어절)
-      `;
-
-      builderItemsTbody.innerHTML = (data.items || [])
-        .map(
-          (item) => `
-        <tr>
-          <td><code><strong>${escapeHtml(item.doc_id)}</strong></code></td>
-          <td><span class="layer-badge badge-old">${escapeHtml(item.type)}</span></td>
-          <td><code>${escapeHtml((item.files || []).join(', '))}</code></td>
-          <td style="text-align:right; font-weight:700;">${(item.sentences || 0).toLocaleString()}문장</td>
-        </tr>
-      `
-        )
-        .join('');
-
-      builderResultArea.style.display = 'block';
-
-      // Reload overview to reflect newly added documents in dropdowns and tables
-      await loadOverview();
+      // 백그라운드 프로세스가 시작되었으므로 실시간 % 폴링 시작!
+      startBuildPolling();
     } catch (err) {
       btnStartBuild.disabled = false;
-      builderStatusBadge.style.display = 'none';
+      if (builderStatusBadge) builderStatusBadge.style.display = 'none';
       alert(`데이터베이스 생성 요청 실패: ${err.message}`);
     }
   });
+
+  // 페이지 로드 시 혹시 이미 백엔드에서 빌드가 진행 중인지 상태 확인
+  (async function checkExistingBuildOnLoad() {
+    try {
+      const res = await fetch('/api/build-db/status');
+      if (res.ok) {
+        const st = await res.json();
+        if (st && st.is_running) {
+          startBuildPolling();
+        }
+      }
+    } catch (e) {}
+  })();
 
   btnJumpToSearch.addEventListener('click', () => {
     document.querySelector('.nav-tab[data-tab="tab-search"]').click();
@@ -2613,12 +2755,56 @@ let isSearchInProgress = false;
     alert(`[${doc.title}] 말뭉치의 원본 경로가 설정되었습니다.\n\n아래의 [🚀 데이터베이스 생성 시작] 버튼을 누르면 해당 원문 코퍼스가 데이터베이스로 다시 구축됩니다.`);
   }
 
+  // [요청 1 반영] 문서 목록 체크박스 Shift 키 범위 다중 선택 및 일괄 삭제 연동
+  let lastCheckedDocRowIndex = null;
+
+  function updateSelectedDocsDeleteBtnCount() {
+    const checkedBoxes = document.querySelectorAll('.chk-doc-row:checked');
+    const btnDeleteSelected = document.getElementById('btn-delete-selected-docs');
+    const chkAll = document.getElementById('chk-doc-table-all');
+    const allBoxes = document.querySelectorAll('.chk-doc-row');
+    if (btnDeleteSelected) {
+      if (checkedBoxes.length > 0) {
+        btnDeleteSelected.textContent = `🗑️ 선택한 ${checkedBoxes.length}개 말뭉치 일괄 삭제`;
+        btnDeleteSelected.style.fontWeight = '700';
+      } else {
+        btnDeleteSelected.textContent = '🗑️ 선택한 말뭉치 일괄 삭제';
+        btnDeleteSelected.style.fontWeight = 'normal';
+      }
+    }
+    if (chkAll && allBoxes.length > 0) {
+      chkAll.checked = checkedBoxes.length === allBoxes.length;
+    }
+  }
+
+  function bindDocRowCheckboxEvents() {
+    const checkboxes = Array.from(document.querySelectorAll('.chk-doc-row'));
+    checkboxes.forEach((chk, idx) => {
+      chk.addEventListener('click', (e) => {
+        // Shift 키를 누른 채 클릭한 경우 직전 선택 위치부터 현재 위치까지 범위 일괄 선택/해제
+        if (e.shiftKey && lastCheckedDocRowIndex !== null && lastCheckedDocRowIndex !== idx) {
+          const start = Math.min(lastCheckedDocRowIndex, idx);
+          const end = Math.max(lastCheckedDocRowIndex, idx);
+          const targetState = chk.checked;
+          for (let i = start; i <= end; i++) {
+            if (checkboxes[i]) {
+              checkboxes[i].checked = targetState;
+            }
+          }
+        }
+        lastCheckedDocRowIndex = idx;
+        updateSelectedDocsDeleteBtnCount();
+      });
+    });
+  }
+
   // 상단 테이블 전체 선택 체크박스
   const chkDocTableAll = document.getElementById('chk-doc-table-all');
   if (chkDocTableAll) {
     chkDocTableAll.addEventListener('change', (e) => {
       const isChecked = e.target.checked;
       document.querySelectorAll('.chk-doc-row').forEach(c => c.checked = isChecked);
+      updateSelectedDocsDeleteBtnCount();
     });
   }
 
@@ -2628,11 +2814,11 @@ let isSearchInProgress = false;
     btnDeleteSelectedDocs.addEventListener('click', () => {
       const checkedBoxes = Array.from(document.querySelectorAll('.chk-doc-row:checked'));
       if (checkedBoxes.length === 0) {
-        alert('삭제할 말뭉치를 목록에서 먼저 체크해 주세요.');
+        alert('삭제할 말뭉치를 목록에서 먼저 체크해 주세요.\n\n💡 팁: 첫 번째 문서를 체크한 뒤 Shift를 누른 채 다른 문서를 클릭하면 그 사이의 문서들이 모두 한 번에 선택됩니다.');
         return;
       }
       const docIds = checkedBoxes.map(c => c.dataset.docId);
-      deleteDocuments(docIds, `선택한 ${docIds.length}개 말뭉치를 데이터베이스에서 일괄 삭제하시겠습니까?\n\n※ 선택한 말뭉치들의 문장 데이터가 DB에서 제거됩니다.\n(컴퓨터의 원본 텍스트 파일은 그대로 유지되므로 언제든 다시 구축할 수 있습니다)`);
+      deleteDocuments(docIds, `선택한 ${docIds.length}개 말뭉치를 데이터베이스에서 일괄 삭제하시겠습니까?\n\n※ 선택한 말뭉치들의 문장 데이터가 DB에서 영구 제거됩니다.\n(컴퓨터의 원본 텍스트 파일은 안전하게 보존되므로 언제든 다시 구축할 수 있습니다)`);
     });
   }
 

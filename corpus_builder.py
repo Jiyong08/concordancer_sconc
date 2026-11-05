@@ -334,6 +334,9 @@ def save_document_and_segments(conn, doc_info, file_records, segments_list, targ
     cur = conn.cursor()
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     total_sents = len(segments_list)
+    if total_sents == 0:
+        print(f"[경고] 문장이 추출되지 않아 DB 등록을 건너뜁니다: {doc_info.get('doc_id')}")
+        return 0, 0
     total_eojeols = sum(
         s["eojeol_cnt"] if "eojeol_cnt" in s else len((s.get("text_unicode") or s["text_raw"]).split())
         for s in segments_list
@@ -540,52 +543,102 @@ def parse_nikl_json(file_path: str, enc: str):
                 })
     return segs, has_morph
 
-# 4. 세종 TEI 문어 원시 (2BA* 형태: <head>, <p>)
+# 4. 세종 TEI 문어 (2BA*, BT* 등 문어 원시 및 형태소 분석 TSV 지원)
 def parse_sejong_tei_written(file_path: str, enc: str):
     with open(file_path, "r", encoding=enc, errors="ignore") as f:
-        lines = [l.rstrip("\r\n") for l in f]
+        text = f.read()
+
+    # teiHeader 분리
+    th_match = re.search(r'</teiHeader>', text, re.IGNORECASE)
+    body_content = text[th_match.end():] if th_match else text
+
     segs = []
+    fname_stem = Path(file_path).stem
     cur_date = ""
     cur_page = ""
-    in_body = False
     idx = 0
-    for l in lines:
-        s = l.strip()
-        if "<body>" in s:
-            in_body = True
+    has_morph = False
+
+    # <date>...</date>, <page>...</page>, <head>...</head>, <p>...</p>, <s>...</s>
+    pattern = re.compile(
+        r'<(date|page|head|p|s)[^>]*>(.*?)</\1>',
+        re.IGNORECASE | re.DOTALL
+    )
+
+    for m in pattern.finditer(body_content):
+        tag = m.group(1).lower()
+        raw_inner = m.group(2).strip()
+        if not raw_inner:
             continue
-        if not in_body:
+
+        if tag == "date":
+            clean = re.sub(r'<[^>]+>', '', raw_inner).strip()
+            if "\t" in clean:
+                parts = clean.split("\t")
+                cur_date = parts[1].strip() if len(parts) >= 2 else parts[0].strip()
+            else:
+                cur_date = clean
             continue
-        dm = re.search(r"<date>(.*?)</date>", s)
-        if dm:
-            cur_date = dm.group(1).strip()
+
+        if tag == "page":
+            clean = re.sub(r'<[^>]+>', '', raw_inner).strip()
+            if "\t" in clean:
+                parts = clean.split("\t")
+                cur_page = parts[1].strip() if len(parts) >= 2 else parts[0].strip()
+            else:
+                cur_page = clean
             continue
-        pm = re.search(r"<page>(.*?)</page>", s)
-        if pm:
-            cur_page = pm.group(1).strip()
+
+        inner_lines = [l.strip() for l in raw_inner.splitlines() if l.strip()]
+        if not inner_lines:
             continue
-        hm = re.search(r"<head>(.*?)</head>", s)
-        if hm:
-            idx += 1
-            segs.append({
-                "sent_id_str": f"{Path(file_path).stem}-{idx:05d}",
-                "part_type": "head",
-                "lang": "kor",
-                "page_info": f"{cur_date} p.{cur_page}".strip(),
-                "text_raw": hm.group(1).strip()
-            })
-            continue
-        pgm = re.search(r"<p>(.*?)</p>", s)
-        if pgm:
-            idx += 1
-            segs.append({
-                "sent_id_str": f"{Path(file_path).stem}-{idx:05d}",
-                "part_type": "p",
-                "lang": "kor",
-                "page_info": f"{cur_date} p.{cur_page}".strip(),
-                "text_raw": pgm.group(1).strip()
-            })
-    return segs
+
+        tsv_lines = [l for l in inner_lines if '\t' in l]
+        if len(tsv_lines) >= max(1, len(inner_lines) // 2):
+            has_morph = True
+            cur_eojeols = []
+            for l in inner_lines:
+                if '\t' not in l:
+                    continue
+                parts = l.split('\t')
+                if len(parts) >= 3:
+                    w_id, word, morph = parts[0].strip(), parts[1].strip(), parts[2].strip()
+                elif len(parts) == 2:
+                    w_id, word, morph = str(len(cur_eojeols) + 1), parts[0].strip(), parts[1].strip()
+                else:
+                    continue
+                cur_eojeols.append({"id": w_id, "word": word, "morph": morph, "sense": ""})
+
+            if cur_eojeols:
+                idx += 1
+                raw_s = " ".join(x["word"] for x in cur_eojeols)
+                m_flat = " | ".join([x["word"] + "[" + x["morph"] + "]" for x in cur_eojeols])
+                page_str = f"{cur_date} p.{cur_page}".strip() if (cur_date or cur_page) else fname_stem
+                segs.append({
+                    "sent_id_str": f"{fname_stem}-{idx:05d}",
+                    "part_type": tag,
+                    "lang": "kor",
+                    "page_info": page_str,
+                    "text_raw": raw_s,
+                    "morph_flat": m_flat,
+                    "eojeols_json": json.dumps(cur_eojeols, ensure_ascii=False),
+                    "eojeol_cnt": len(cur_eojeols)
+                })
+        else:
+            clean_text = re.sub(r'<[^>]+>', '', raw_inner).strip()
+            clean_text = " ".join(clean_text.split())
+            if clean_text:
+                idx += 1
+                page_str = f"{cur_date} p.{cur_page}".strip() if (cur_date or cur_page) else fname_stem
+                segs.append({
+                    "sent_id_str": f"{fname_stem}-{idx:05d}",
+                    "part_type": tag,
+                    "lang": "kor",
+                    "page_info": page_str,
+                    "text_raw": clean_text
+                })
+
+    return segs, has_morph
 
 # 5. 세종 TEI 구어 전사 원시 (4CM* 형태: <u who> <s n>)
 def parse_sejong_tei_spoken_raw(file_path: str, enc: str):
@@ -1313,18 +1366,32 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
                 processed_files.add(str(f.resolve()))
                 emit_progress("document_done", fname, doc_info["doc_id"], f"문서 구축 완료: {doc_info['doc_id']} ({s_cnt:,}문장)")
 
-            # C-3. 세종 문어 TEI 원시 (2BA* 스타일: <date>, <page>, <head>, <p>)
-            elif "<tei.2>" in sample_str and ("<head>" in sample_str or "<p>" in sample_str):
+            # C-3. 세종 문어 TEI (2BA*, BT* 문어 원시 및 형태 분석)
+            elif re.search(r"<tei\.2>", sample_str, re.I) or re.search(r"<teiheader>", sample_str, re.I):
+                segs, has_morph = parse_sejong_tei_written(str(f), enc)
+                if has_morph:
+                    cat_name = "형태 분석 말뭉치 (세종 문어)"
+                    annot_layers = "문어 원문 + 어절별 형태소 분석"
+                    doc_title = f"{f.stem} (세종 문어 형태 분석)"
+                    doc_id_val = f"SEJONG_WR_MORPH_{f.stem.upper().replace('-', '_')}"
+                    notation_analysis = "어절별 형태소/품사 TSV 표기"
+                else:
+                    cat_name = "원시 말뭉치 (세종 문어 TEI)"
+                    annot_layers = "문어 원문 + 날짜/면수/제목/문단 마크업"
+                    doc_title = f"{f.stem} (세종 문어 원시)"
+                    doc_id_val = f"SEJONG_RAW_{f.stem.upper().replace('-', '_')}"
+                    notation_analysis = "출전 일자 및 지면 표기"
+
                 if progress_callback:
-                    progress_callback(f"세종 문어 원시 TEI 말뭉치 감지: {fname} 처리 중...")
-                segs = parse_sejong_tei_written(str(f), enc)
+                    progress_callback(f"{cat_name} 감지: {fname} 처리 중...")
+
                 doc_info = {
-                    "doc_id": f"SEJONG_RAW_{f.stem.upper().replace('-', '_')}",
-                    "title": f"{f.stem} (세종 문어 원시)",
+                    "doc_id": doc_id_val,
+                    "title": doc_title,
                     "author": "국립국어원",
                     "pub_year": "1990년대",
-                    "corpus_category": "원시 말뭉치 (세종 문어 TEI)",
-                    "annotation_layers": "원문 + 날짜/면수/제목/문단 마크업"
+                    "corpus_category": cat_name,
+                    "annotation_layers": annot_layers
                 }
                 file_recs = [{
                     "file_name": fname,
@@ -1332,15 +1399,16 @@ def build_corpus_from_folder(folder_path: str, db_path: str = DEFAULT_DB_PATH, p
                     "file_hash": compute_file_hash(str(f)),
                     "original_encoding": enc_label,
                     "text_format": "TEI.2 SGML/XML",
-                    "corpus_type": "원시 말뭉치 (세종 문어)",
+                    "corpus_type": cat_name,
                     "raw_notation_desc": "<head>제목</head>, <p>문단</p>",
-                    "analysis_notation_desc": "출전 일자 및 지면 표기"
+                    "analysis_notation_desc": notation_analysis
                 }]
                 s_cnt, e_cnt = save_document_and_segments(conn, doc_info, file_recs, segs)
-                report["documents_created"] += 1
-                report["sentences_imported"] += s_cnt
-                report["eojeols_imported"] += e_cnt
-                report["items"].append({"type": "세종 문어 원시", "doc_id": doc_info["doc_id"], "files": [fname], "sentences": s_cnt})
+                if s_cnt > 0:
+                    report["documents_created"] += 1
+                    report["sentences_imported"] += s_cnt
+                    report["eojeols_imported"] += e_cnt
+                    report["items"].append({"type": cat_name, "doc_id": doc_info["doc_id"], "files": [fname], "sentences": s_cnt})
                 processed_files.add(str(f.resolve()))
                 emit_progress("document_done", fname, doc_info["doc_id"], f"문서 구축 완료: {doc_info['doc_id']} ({s_cnt:,}문장)")
 
