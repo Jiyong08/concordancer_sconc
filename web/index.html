@@ -18,21 +18,18 @@
         </div>
       </div>
       <div class="header-badges">
+        <select id="select-aspect-ratio" class="ratio-select" title="모니터 화면 크기 및 비율 설정">
+          <option value="auto" selected>🖥️ 화면크기: 모니터 맞춤(자동)</option>
+          <option value="16:9">🖥️ 화면크기: 16:9 와이드</option>
+          <option value="4:3">🖥️ 화면크기: 4:3 표준</option>
+          <option value="full">🖥️ 화면크기: 창 전체 채우기</option>
+        </select>
         <span class="sys-badge" id="badge-corpus-stats">말뭉치 로딩 중…</span>
         <span class="sys-badge" id="badge-memory-tier">메모리 프로파일 측정 중…</span>
       </div>
     </header>
 
     <nav class="nav-tabs" id="main-nav-tabs">
-      <!-- 최상단 메뉴 가장 왼쪽: 화면 크기/비율 조정 버튼 -->
-      <div class="nav-control-group" title="모니터 화면 크기 및 비율 설정">
-        <select id="select-aspect-ratio" class="nav-ratio-select">
-          <option value="auto" selected>🖥️ 화면크기: 모니터 맞춤(자동)</option>
-          <option value="16:9">🖥️ 화면크기: 16:9 와이드</option>
-          <option value="4:3">🖥️ 화면크기: 4:3 표준</option>
-          <option value="full">🖥️ 화면크기: 창 전체 채우기</option>
-        </select>
-      </div>
       <button class="nav-tab active" data-tab="tab-search">
         🔍 다층 말뭉치 통합 검색
       </button>
