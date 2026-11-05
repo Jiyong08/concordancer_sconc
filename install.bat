@@ -54,7 +54,8 @@ if %errorlevel% neq 0 (
     pause
     exit /b 1
 )
-echo   - Release binary ready: engine\target\release\sconc.exe [OK]
+copy /y "engine\target\release\sconc.exe" "sconc.exe" >nul
+echo   - Release binary ready: engine\target\release\sconc.exe and sconc.exe [OK]
 echo.
 
 echo [4/4] Registering global command in User PATH...
@@ -67,7 +68,7 @@ if not exist "%GLOBAL_BIN_DIR%" mkdir "%GLOBAL_BIN_DIR%"
     echo "%SCRIPT_DIR%engine\target\release\sconc.exe" --port 8787 --open %%*
 ) > "%GLOBAL_BIN_DIR%\sconc.cmd"
 
-powershell -Command " = [Environment]::GetEnvironmentVariable('Path', 'User');  = '%SCRIPT_DIR%'.TrimEnd('\'); if ( -notlike ('*' +  + '*')) { [Environment]::SetEnvironmentVariable('Path',  + ';' + , 'User') }"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$target = '%GLOBAL_BIN_DIR%'; $userPath = [Environment]::GetEnvironmentVariable('Path', 'User'); if ($userPath -notlike ('*' + $target + '*')) { $newPath = if ([string]::IsNullOrEmpty($userPath)) { $target } else { $userPath.TrimEnd(';') + ';' + $target }; [Environment]::SetEnvironmentVariable('Path', $newPath, 'User') }"
 
 echo   - Registered: %GLOBAL_BIN_DIR%\sconc.cmd
 echo   - You can now run 'sconc' from any terminal directory.
