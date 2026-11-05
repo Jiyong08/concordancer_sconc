@@ -461,11 +461,19 @@ let isSearchInProgress = false;
         )
         .join('');
 
+      const docsListTitle = document.getElementById('docs-list-title');
+      if (docsListTitle) {
+        docsListTitle.textContent = `📚 구축된 통합 말뭉치 목록 (총 ${data.documents.length}개 말뭉치 · ${data.total_sentences.toLocaleString()}문장)`;
+      }
+
       const docsTbody = document.getElementById('docs-tbody');
       docsTbody.innerHTML = data.documents
         .map(
           (d) => `
-        <tr>
+        <tr data-doc-id="${escapeHtml(d.doc_id)}">
+          <td style="text-align:center;">
+            <input type="checkbox" class="chk-doc-row" data-doc-id="${escapeHtml(d.doc_id)}" />
+          </td>
           <td><code><strong>${escapeHtml(d.doc_id)}</strong></code></td>
           <td style="font-weight:700;">${escapeHtml(d.title)}</td>
           <td>${escapeHtml(d.corpus_category)}</td>
@@ -473,17 +481,26 @@ let isSearchInProgress = false;
           <td><code>${escapeHtml(d.source_files_list)}</code></td>
           <td style="text-align:right; font-weight:700;">${d.sentence_count.toLocaleString()}</td>
           <td style="text-align:right;">${d.eojeol_count.toLocaleString()}</td>
-          <td>
-            <button type="button" class="btn btn-primary btn-browse-doc" data-doc="${escapeHtml(d.doc_id)}" style="padding:4px 10px; font-size:0.76rem;">
-              📖 이 문서 열람
-            </button>
+          <td style="text-align:center; white-space:nowrap;">
+            <div style="display:inline-flex; gap:4px;">
+              <button type="button" class="btn btn-primary btn-browse-doc" data-doc="${escapeHtml(d.doc_id)}" style="padding:3px 8px; font-size:0.74rem;">
+                📖 열람
+              </button>
+              <button type="button" class="btn btn-outline btn-rebuild-doc" data-doc="${escapeHtml(d.doc_id)}" title="이 말뭉치의 원본 파일을 바탕으로 다시 DB로 재구축" style="padding:3px 8px; font-size:0.74rem; border-color:#3b82f6; color:#1d4ed8;">
+                🔄 다시 구축
+              </button>
+              <button type="button" class="btn btn-outline btn-delete-doc" data-doc="${escapeHtml(d.doc_id)}" title="이 말뭉치를 DB에서 삭제" style="padding:3px 8px; font-size:0.74rem; border-color:#ef4444; color:#dc2626;">
+                🗑️ 삭제
+              </button>
+            </div>
           </td>
         </tr>
       `
         )
         .join('');
 
-      document.querySelectorAll('.btn-browse-doc').forEach((b) => {
+      // 이 문서 열람 버튼 이벤트
+      docsTbody.querySelectorAll('.btn-browse-doc').forEach((b) => {
         b.addEventListener('click', () => {
           const docId = b.dataset.doc;
           document.querySelector('.nav-tab[data-tab="tab-search"]').click();
@@ -494,6 +511,28 @@ let isSearchInProgress = false;
           selectLayer.value = 'ALL';
           selectMode.value = 'all';
           runSearch();
+        });
+      });
+
+      // 개별 말뭉치 삭제 버튼 이벤트
+      docsTbody.querySelectorAll('.btn-delete-doc').forEach((b) => {
+        b.addEventListener('click', () => {
+          const docId = b.dataset.doc;
+          const doc = globalDocuments.find(x => x.doc_id === docId);
+          const title = doc ? doc.title : docId;
+          const sents = doc ? (doc.sentence_count || 0).toLocaleString() : '';
+          deleteDocuments([docId], `말뭉치 [${title}] (${docId})을(를) 데이터베이스에서 삭제하시겠습니까?\n\n※ 해당 말뭉치와 연계된 ${sents}문장이 DB에서 제거됩니다.\n(컴퓨터의 원본 텍스트 파일은 그대로 유지되므로 언제든 다시 구축할 수 있습니다)`);
+        });
+      });
+
+      // 개별 말뭉치 다시 구축 버튼 이벤트
+      docsTbody.querySelectorAll('.btn-rebuild-doc').forEach((b) => {
+        b.addEventListener('click', () => {
+          const docId = b.dataset.doc;
+          const doc = globalDocuments.find(x => x.doc_id === docId);
+          if (doc) {
+            triggerRebuildForDoc(doc);
+          }
         });
       });
 
@@ -2507,3 +2546,104 @@ let isSearchInProgress = false;
   loadOverview();
   pollBuildStatus();
 })();
+
+
+  // =========================================================================
+  // 말뭉치 삭제 및 원문 코퍼스 재구축(Rebuild) 연동 기능
+  // =========================================================================
+  let lastRebuildSourcePath = '';
+
+  async function deleteDocuments(docIds, confirmMessage) {
+    if (!docIds || docIds.length === 0) return;
+    if (!confirm(confirmMessage)) return;
+
+    try {
+      const qs = new URLSearchParams({ doc_ids: docIds.join(',') });
+      const res = await fetch(`/api/document/delete?${qs.toString()}`, { method: 'POST' });
+      const data = await res.json();
+
+      if (data.error) {
+        alert('삭제 실패: ' + data.error);
+        return;
+      }
+
+      // 삭제된 문서가 현재 선택되어 있던 경우 선택 해제
+      docIds.forEach(id => {
+        selectedDocIds.delete(id);
+        tempSelectedDocIds.delete(id);
+      });
+      if (selectedDocIds.size === 0) {
+        selectedDocIds = new Set(['ALL']);
+      }
+      updateDocSelectorTriggerLabel();
+
+      // 재구축 지원: 삭제된 문서들의 원본 파일 경로 기억
+      if (data.deleted_items && data.deleted_items.length > 0) {
+        const first = data.deleted_items[0];
+        lastRebuildSourcePath = first.source_files || '';
+        const btnFillRebuild = document.getElementById('btn-fill-rebuild-target');
+        if (btnFillRebuild && lastRebuildSourcePath) {
+          btnFillRebuild.style.display = 'inline-flex';
+          btnFillRebuild.textContent = `🔄 최근 삭제한 [${first.title.slice(0, 15)}...] 원문 경로 채우기`;
+        }
+      }
+
+      alert(`${data.message}\n\n💡 해당 원본 코퍼스는 [📁 말뭉치 폴더 지정 DB 생성] 탭에서 언제든지 다시 데이터베이스로 구축할 수 있습니다.`);
+      await loadOverview();
+    } catch (err) {
+      alert('말뭉치 삭제 통신 오류: ' + err.message);
+    }
+  }
+
+  function triggerRebuildForDoc(doc) {
+    if (!doc) return;
+    const tabBuildBtn = document.querySelector('.nav-tab[data-tab="tab-build-db"]');
+    if (tabBuildBtn) tabBuildBtn.click();
+
+    const inputFolder = document.getElementById('builder-folder-path');
+    if (inputFolder) {
+      let suggested = doc.source_files_list || '';
+      // sample 폴더 관련이면 절대경로 형태 채우기
+      if (suggested && !suggested.includes(':') && !suggested.startsWith('/')) {
+        suggested = `c:\\AG\\concordance\\sample`;
+      }
+      inputFolder.value = suggested;
+      inputFolder.focus();
+    }
+    alert(`[${doc.title}] 말뭉치의 원본 경로가 설정되었습니다.\n\n아래의 [🚀 데이터베이스 생성 시작] 버튼을 누르면 해당 원문 코퍼스가 데이터베이스로 다시 구축됩니다.`);
+  }
+
+  // 상단 테이블 전체 선택 체크박스
+  const chkDocTableAll = document.getElementById('chk-doc-table-all');
+  if (chkDocTableAll) {
+    chkDocTableAll.addEventListener('change', (e) => {
+      const isChecked = e.target.checked;
+      document.querySelectorAll('.chk-doc-row').forEach(c => c.checked = isChecked);
+    });
+  }
+
+  // 상단 선택한 말뭉치 일괄 삭제 버튼
+  const btnDeleteSelectedDocs = document.getElementById('btn-delete-selected-docs');
+  if (btnDeleteSelectedDocs) {
+    btnDeleteSelectedDocs.addEventListener('click', () => {
+      const checkedBoxes = Array.from(document.querySelectorAll('.chk-doc-row:checked'));
+      if (checkedBoxes.length === 0) {
+        alert('삭제할 말뭉치를 목록에서 먼저 체크해 주세요.');
+        return;
+      }
+      const docIds = checkedBoxes.map(c => c.dataset.docId);
+      deleteDocuments(docIds, `선택한 ${docIds.length}개 말뭉치를 데이터베이스에서 일괄 삭제하시겠습니까?\n\n※ 선택한 말뭉치들의 문장 데이터가 DB에서 제거됩니다.\n(컴퓨터의 원본 텍스트 파일은 그대로 유지되므로 언제든 다시 구축할 수 있습니다)`);
+    });
+  }
+
+  // 재구축 경로 채우기 버튼 이벤트
+  const btnFillRebuildTarget = document.getElementById('btn-fill-rebuild-target');
+  if (btnFillRebuildTarget) {
+    btnFillRebuildTarget.addEventListener('click', () => {
+      const inputFolder = document.getElementById('builder-folder-path');
+      if (inputFolder && lastRebuildSourcePath) {
+        inputFolder.value = lastRebuildSourcePath;
+        alert(`원문 코퍼스 경로 '${lastRebuildSourcePath}' 가 채워졌습니다.\n[🚀 데이터베이스 생성 시작]을 누르면 다시 DB로 구축됩니다.`);
+      }
+    });
+  }

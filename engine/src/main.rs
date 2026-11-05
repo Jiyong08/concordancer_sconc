@@ -3045,6 +3045,57 @@ fn handle_segment_detail(
     json_response(&resp, 200)
 }
 
+
+fn handle_document_delete(
+    state: &AppState,
+    params: &HashMap<String, String>,
+) -> Response<std::io::Cursor<Vec<u8>>> {
+    let doc_ids_raw = params.get("doc_ids").or_else(|| params.get("doc_id")).map(|s| s.as_str()).unwrap_or("");
+    let doc_ids: Vec<&str> = doc_ids_raw.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+    if doc_ids.is_empty() {
+        return json_response(&serde_json::json!({ "error": "삭제할 doc_id 또는 doc_ids 파라미터가 필요합니다." }), 400);
+    }
+
+    let conn = match Connection::open(&state.db_path) {
+        Ok(c) => c,
+        Err(e) => return json_response(&serde_json::json!({ "error": e.to_string() }), 500),
+    };
+
+    let mut deleted_items = Vec::new();
+    let mut total_deleted_segs = 0usize;
+
+    for did in &doc_ids {
+        let doc_info: Option<(String, String, i64, String)> = conn.query_row(
+            "SELECT title, corpus_category, sentence_count, source_files_list FROM documents WHERE doc_id = ?",
+            params![did],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        ).ok();
+
+        if let Some((title, category, sents, sources)) = doc_info {
+            let del_segs = conn.execute("DELETE FROM segments WHERE doc_id = ?", params![did]).unwrap_or(0);
+            let _ = conn.execute("DELETE FROM source_files WHERE linked_doc_id = ?", params![did]);
+            let _ = conn.execute("DELETE FROM documents WHERE doc_id = ?", params![did]);
+            total_deleted_segs += del_segs as usize;
+            deleted_items.push(serde_json::json!({
+                "doc_id": did,
+                "title": title,
+                "category": category,
+                "sentence_count": sents,
+                "source_files": sources,
+            }));
+        }
+    }
+    let _ = conn.execute("DELETE FROM segment_edits WHERE segment_id NOT IN (SELECT segment_id FROM segments)", []);
+
+    json_response(&serde_json::json!({
+        "status": "ok",
+        "message": format!("총 {}개 말뭉치 ({}문장) 삭제가 완료되었습니다.", deleted_items.len(), total_deleted_segs),
+        "deleted_count": deleted_items.len(),
+        "total_deleted_segments": total_deleted_segs,
+        "deleted_items": deleted_items,
+    }), 200)
+}
+
 fn handle_segment_edit(
     state: &AppState,
     req: &mut Request,
@@ -4138,6 +4189,7 @@ fn main() {
                 (&Method::Get, "/api/open-editor") | (&Method::Post, "/api/open-editor") => handle_open_editor(&params),
                 (&Method::Get, "/api/system/installed-browsers") => handle_installed_browsers(&state),
                 (&Method::Get, "/api/system/switch-browser") | (&Method::Post, "/api/system/switch-browser") => handle_switch_browser(&state, &params),
+                (&Method::Get, "/api/document/delete") | (&Method::Post, "/api/document/delete") => handle_document_delete(&state, &params),
                 (&Method::Post, "/api/segment/edit") => handle_segment_edit(&state, &mut req),
                 (&Method::Post, "/api/build-db") => handle_build_db(&state, &mut req),
                 (&Method::Get, "/api/build-db/status") => handle_build_db_status(&state),
