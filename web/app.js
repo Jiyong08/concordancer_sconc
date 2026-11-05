@@ -1954,69 +1954,109 @@ let isSearchInProgress = false;
     });
 
     try {
-      const res = await fetch(`/api/search/stream?${qs.toString()}`, {
-        signal: myAbortController.signal,
-      });
+      // [핵심] 1차: 고속 실시간 점진적 스트리밍 (/api/search/stream)
+      // 404 또는 구버전 서버 접속 시 자동으로 표준 검색(/api/search)으로 완벽 Fallback!
+      let streamSuccess = false;
+      try {
+        const streamRes = await fetch(`/api/search/stream?${qs.toString()}`, {
+          signal: myAbortController.signal,
+        });
 
-      if (!res.ok) {
-        throw new Error(`서버 응답 오류 (HTTP ${res.status})`);
+        if (streamRes.ok) {
+          streamSuccess = true;
+          const reader = streamRes.body.getReader();
+          const decoder = new TextDecoder('utf-8');
+          let buffer = '';
+          let isFirstHit = true;
+
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop(); // 남아있는 불완전한 줄은 버퍼에 보관
+
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              let msg = null;
+              try {
+                msg = JSON.parse(line);
+              } catch (_) {
+                continue;
+              }
+
+              if (msg.type === 'start') {
+                kwicResultMeta.innerHTML = `<strong style="color:#2563eb;">⚡ 실시간 검색 중… 검색된 문장이 발견되는 즉시 아래에 표시됩니다. (0건)</strong>`;
+              } else if (msg.type === 'hit' && msg.hit) {
+                // 검색된 문장이 검색되자마자 바로 화면에 추가!
+                const hit = msg.hit;
+                targetTab.data.hits.push(hit);
+                targetTab.data.returned_count = targetTab.data.hits.length;
+                targetTab.data.total_matches = msg.matched_count || targetTab.data.hits.length;
+
+                const tempTbody = document.createElement('tbody');
+                tempTbody.innerHTML = createKwicRowHtml(hit);
+                const newRow = tempTbody.firstElementChild;
+                if (newRow) {
+                  bindKwicRowItemEvents(newRow, targetTab);
+                  kwicTbody.appendChild(newRow);
+
+                  if (isFirstHit) {
+                    isFirstHit = false;
+                    newRow.classList.add('selected');
+                    targetTab.selectedSegId = hit.segment_id;
+                    loadSegmentDetail(hit.segment_id);
+                  }
+                }
+
+                kwicResultMeta.innerHTML = `<strong style="color:#2563eb;">⚡ 실시간 검색 중… 현재 ${targetTab.data.hits.length.toLocaleString()}건 발견되어 바로 표시 중</strong>`;
+              } else if (msg.type === 'done') {
+                targetTab.data.total_matches = msg.total_matches || targetTab.data.hits.length;
+                targetTab.data.returned_count = targetTab.data.hits.length;
+                targetTab.data.elapsed_ms = Math.round(msg.elapsed_ms || 0);
+                targetTab.data.cancelled = msg.cancelled || false;
+              } else if (msg.type === 'error') {
+                kwicResultMeta.innerHTML = `<strong style="color:#dc2626;">오류: ${escapeHtml(msg.error)}</strong>`;
+              }
+            }
+          }
+        }
+      } catch (streamErr) {
+        if (streamErr.name === 'AbortError') throw streamErr;
+        console.warn('Streaming search failed or 404, falling back to standard /api/search:', streamErr);
+        streamSuccess = false;
       }
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder('utf-8');
-      let buffer = '';
-      let isFirstHit = true;
+      // [Fallback] 서버가 아직 재시작되지 않아 404가 발생했거나 스트리밍 실패 시 표준 API로 자동 조회
+      if (!streamSuccess) {
+        const stdRes = await fetch(`/api/search?${qs.toString()}`, {
+          signal: myAbortController.signal,
+        });
+        if (!stdRes.ok) {
+          throw new Error(`서버 응답 오류 (HTTP ${stdRes.status})`);
+        }
+        const data = await stdRes.json();
+        targetTab.data = data;
 
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop(); // 남아있는 불완전한 줄은 버퍼에 보관
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          let msg = null;
-          try {
-            msg = JSON.parse(line);
-          } catch (_) {
-            continue;
-          }
-
-          if (msg.type === 'start') {
-            kwicResultMeta.innerHTML = `<strong style="color:#2563eb;">⚡ 실시간 검색 중… 검색된 문장이 발견되는 즉시 아래에 표시됩니다. (0건)</strong>`;
-          } else if (msg.type === 'hit' && msg.hit) {
-            // [사용자 핵심 요구사항] 검색된 문장이 검색되자마자 바로 화면에 추가!
-            const hit = msg.hit;
-            targetTab.data.hits.push(hit);
-            targetTab.data.returned_count = targetTab.data.hits.length;
-            targetTab.data.total_matches = msg.matched_count || targetTab.data.hits.length;
-
+        kwicTbody.innerHTML = '';
+        if (data.hits && data.hits.length > 0) {
+          let isFirst = true;
+          for (let i = 0; i < data.hits.length; i++) {
+            const hit = data.hits[i];
             const tempTbody = document.createElement('tbody');
             tempTbody.innerHTML = createKwicRowHtml(hit);
             const newRow = tempTbody.firstElementChild;
             if (newRow) {
               bindKwicRowItemEvents(newRow, targetTab);
               kwicTbody.appendChild(newRow);
-
-              // 첫 번째 행이 추가되면 자동으로 상세 뷰어에 로드
-              if (isFirstHit) {
-                isFirstHit = false;
+              if (isFirst) {
+                isFirst = false;
                 newRow.classList.add('selected');
                 targetTab.selectedSegId = hit.segment_id;
                 loadSegmentDetail(hit.segment_id);
               }
             }
-
-            kwicResultMeta.innerHTML = `<strong style="color:#2563eb;">⚡ 실시간 검색 중… 현재 ${targetTab.data.hits.length.toLocaleString()}건 발견되어 바로 표시 중</strong>`;
-          } else if (msg.type === 'done') {
-            targetTab.data.total_matches = msg.total_matches || targetTab.data.hits.length;
-            targetTab.data.returned_count = targetTab.data.hits.length;
-            targetTab.data.elapsed_ms = Math.round(msg.elapsed_ms || 0);
-            targetTab.data.cancelled = msg.cancelled || false;
-          } else if (msg.type === 'error') {
-            kwicResultMeta.innerHTML = `<strong style="color:#dc2626;">오류: ${escapeHtml(msg.error)}</strong>`;
           }
         }
       }
@@ -2042,12 +2082,12 @@ let isSearchInProgress = false;
             </td>
           </tr>
         `;
-        kwicResultMeta.innerHTML = `검색 결과 없음 · 소요시간 <strong>${targetTab.data.elapsed_ms}ms</strong>${cancelNote}`;
+        kwicResultMeta.innerHTML = `검색 결과 없음 · 소요시간 <strong>${targetTab.data.elapsed_ms || 0}ms</strong>${cancelNote}`;
       } else {
-        kwicResultMeta.innerHTML = `총 <strong>${targetTab.data.total_matches.toLocaleString()}건</strong> 매칭 (표시 ${targetTab.data.returned_count.toLocaleString()}건 / ${limitNote}) · 소요시간 <strong>${targetTab.data.elapsed_ms}ms</strong>${cancelNote}`;
+        kwicResultMeta.innerHTML = `총 <strong>${(targetTab.data.total_matches || targetTab.data.hits.length).toLocaleString()}건</strong> 매칭 (표시 ${targetTab.data.returned_count.toLocaleString()}건 / ${limitNote}) · 소요시간 <strong>${targetTab.data.elapsed_ms || 0}ms</strong>${cancelNote}`;
       }
 
-      renderTabsBar();
+            renderTabsBar();
     } catch (err) {
       if (mySearchSeq !== currentSearchSeq) return;
 

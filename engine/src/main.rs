@@ -4128,7 +4128,7 @@ fn main() {
             let resp = match (req.method(), path_part) {
                 (&Method::Get, "/api/overview") => handle_overview(&state),
                 (&Method::Get, "/api/search") => handle_search(&state, &params),
-                (&Method::Get, "/api/search/stream") => {
+                (&Method::Get, "/api/search/stream") | (&Method::Get, "/api/search/stream/") => {
                     handle_search_stream(&state, &params, req);
                     return;
                 },
