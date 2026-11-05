@@ -49,7 +49,9 @@ html, body {
   color: var(--text-main);
   font-family: var(--font-ui);
   line-height: 1.45;
-  overflow: hidden; /* 브라우저 전체 창 스크롤 방지: 내부 창에서 스크롤 */
+  overflow-x: auto; /* 14인치 FHD 등 화면 잘림 방지: 브라우저 가로 스크롤 허용 */
+  overflow-y: hidden; /* 상하는 내부 창에서 스크롤 */
+  scrollbar-width: thin;
 }
 
 /* Aspect-Ratio Adaptive Frame (16:9 or 4:3 fitted to user's monitor) */
@@ -62,7 +64,8 @@ html, body {
   max-height: 100vh;
   width: 100%;
   min-width: 960px;
-  overflow: hidden;
+  overflow-x: auto; /* 가로 잘림 시 스크롤 허용 */
+  overflow-y: hidden;
   box-shadow: 0 0 32px rgba(0, 0, 0, 0.5);
 }
 
@@ -158,14 +161,61 @@ html, body {
 /* Navigation Tabs */
 .nav-tabs {
   background: #1e293b;
-  padding: 0 18px;
+  padding: 0 14px;
   display: flex;
+  align-items: center;
   gap: 4px;
   flex-shrink: 0;
   flex-wrap: nowrap;
   overflow-x: auto;
   white-space: nowrap;
   min-width: max-content;
+  scrollbar-width: thin;
+  scrollbar-color: #475569 transparent;
+}
+
+.nav-tabs::-webkit-scrollbar {
+  height: 5px;
+}
+.nav-tabs::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.4);
+}
+.nav-tabs::-webkit-scrollbar-thumb {
+  background: #475569;
+  border-radius: 4px;
+}
+.nav-tabs::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
+/* 최상단 메뉴 가장 왼쪽 화면 크기/비율 조정 컨트롤 */
+.nav-control-group {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 8px;
+  flex-shrink: 0;
+}
+
+.nav-ratio-select {
+  background: #0f172a;
+  color: #38bdf8;
+  font-weight: 700;
+  border: 1px solid #0284c7;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.15s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.nav-ratio-select:hover, .nav-ratio-select:focus {
+  background: #1e293b;
+  border-color: #38bdf8;
+  color: #7dd3fc;
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
 }
 
 .nav-tab {

@@ -176,6 +176,17 @@ let isSearchInProgress = false;
   });
   applyAspectRatio();
 
+  // 최상단 메뉴 바 마우스 휠로 가로 스크롤 지원 (14인치 등 작은 화면 편의 기능)
+  const mainNavTabs = document.getElementById('main-nav-tabs');
+  if (mainNavTabs) {
+    mainNavTabs.addEventListener('wheel', (e) => {
+      if (e.deltaY !== 0) {
+        mainNavTabs.scrollLeft += e.deltaY;
+        e.preventDefault();
+      }
+    }, { passive: false });
+  }
+
   // 2. Corpus View Font Selector (기본 내장 KoPubWorld Dotum Medium.ttf + 사용자 선택 폰트)
   const FONT_MAP = {
     kopub: "'KoPubWorldDotum', 'HANBatang', sans-serif",
