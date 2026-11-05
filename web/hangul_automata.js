@@ -89,6 +89,19 @@ function composeSyllableToText(syl) {
     return s;
   }
 
+  // 초성만 있는 단독 자모(예: 자소 검색 슬롯 [ㅂ/ 입력 중)인 경우 채움문자 없이 단독 출력
+  if (syl.L.length && !syl.V.length && !syl.T.length) {
+    s += String.fromCodePoint(lCp);
+    if (syl.tone && TONE_CP[syl.tone]) s += String.fromCodePoint(TONE_CP[syl.tone]);
+    return s;
+  }
+  // 중성만 있는 단독 자모(예: 자소 검색 슬롯 [/ㆍ/ 입력 중)인 경우 채움문자 없이 단독 출력
+  if (!syl.L.length && syl.V.length && !syl.T.length) {
+    s += String.fromCodePoint(vCp);
+    if (syl.tone && TONE_CP[syl.tone]) s += String.fromCodePoint(TONE_CP[syl.tone]);
+    return s;
+  }
+
   if (syl.L.length) {
     s += String.fromCodePoint(lCp || 0x115F);
   } else if (syl.V.length || syl.T.length) {
@@ -370,6 +383,13 @@ class HancomOldHangulAutomata {
     if (target) {
       target.tone = target.tone === level ? 0 : level;
     }
+  }
+
+  feedChar(ch) {
+    this._resolveYeonseo(false);
+    this._resolveSpace(false);
+    this._flushCurrent();
+    this.committed.push(ch);
   }
 
   feedRawText(str) {

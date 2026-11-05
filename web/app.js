@@ -342,12 +342,26 @@ let isSearchInProgress = false;
       }
       searchInput.value = automata.getText();
       updateKbStatus();
+      return;
+    }
+
+    // [옛한글 입력기 활성화 상태에서도 숫자, 영문, 문장부호, 정규식/자소 검색 기호 정상 입력]
+    if (e.key && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      e.preventDefault();
+      automata.feedChar(e.key);
+      searchInput.value = automata.getText();
+      updateKbStatus();
+      return;
     }
   });
 
   searchInput.addEventListener('input', () => {
     if (oldHangulImeActive) {
-      searchInput.value = automata.getText();
+      // 외부 붙여넣기나 마우스 조작 등으로 내용이 달라진 경우 오토마타와 상태 동기화
+      if (searchInput.value !== automata.getText()) {
+        automata.reset();
+        automata.feedRawText(searchInput.value);
+      }
     }
   });
 
@@ -2026,8 +2040,13 @@ let isSearchInProgress = false;
   // [요청 반영] 실시간 스트리밍 검색 (검색된 문장이 검색되자마자 즉시 화면에 행 추가)
   async function runSearch() {
     const q = searchInput.value;
+    const selectedMethods = getSelectedSearchMethods();
+    // [자소 검색 자동 활성화] 검색어에 자소 검색 문법('[', ']', '/')이 포함되어 있으면 자소 검색 모드 자동 추가
+    if (q.includes('[') && q.includes(']') && q.includes('/') && !selectedMethods.includes('jamo')) {
+      selectedMethods.push('jamo');
+    }
     const targets = getSelectedSearchTargets().join(',');
-    const methods = getSelectedSearchMethods().join(',');
+    const methods = selectedMethods.join(',');
     const mode = selectMode ? selectMode.value : 'all';
     const layer = selectLayer ? selectLayer.value : 'ALL';
     const isAllDocs = selectedDocIds.has('ALL') || selectedDocIds.size === globalDocuments.length || selectedDocIds.size === 0;

@@ -364,7 +364,7 @@ impl Normalizer {
         let chars: Vec<char> = raw_slot.chars().collect();
         let mut i = 0;
         while i < chars.len() {
-            if chars[i].is_whitespace() {
+            if chars[i].is_whitespace() || chars[i] == '\u{115F}' || chars[i] == '\u{1160}' || chars[i] == '\u{F87F}' {
                 i += 1;
                 continue;
             }
