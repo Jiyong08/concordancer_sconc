@@ -36,11 +36,11 @@
       <button class="nav-tab" data-tab="tab-build-db">
         📁 말뭉치 폴더 지정 DB 생성
       </button>
-      <button class="nav-tab" data-tab="tab-mapping">
-        🗂️ 원본 파일 ↔ 데이터베이스 매칭 테이블 (16종)
+      <button class="nav-tab" data-tab="tab-mapping" id="nav-tab-mapping">
+        🗂️ 원본 파일 ↔ 데이터베이스 매칭 테이블
       </button>
-      <button class="nav-tab" data-tab="tab-docs">
-        📚 구축 데이터베이스 문서 목록 (13종)
+      <button class="nav-tab" data-tab="tab-docs" id="nav-tab-docs">
+        📚 구축 데이터베이스 문서 목록
       </button>
       <button class="nav-tab" data-tab="tab-guide">
         📖 사용법 및 검색 방법 안내
@@ -281,15 +281,20 @@
             </div>
             <div class="builder-form-card">
               <div class="builder-form-row">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
                   <label for="builder-folder-path"><strong>말뭉치 폴더 절대/상대 경로:</strong></label>
-                  <button type="button" class="btn btn-outline" id="btn-fill-sample-folder" style="padding:2px 8px; font-size:0.75rem;">
-                    ⚡ sample 폴더 경로 자동 채우기
-                  </button>
+                  <div style="display:flex; gap:6px; align-items:center;">
+                    <button type="button" class="btn btn-primary" id="btn-browse-folder" style="padding:3px 10px; font-size:0.76rem; background:#2563eb; border-color:#2563eb;">
+                      📂 폴더 찾아보기...
+                    </button>
+                    <button type="button" class="btn btn-outline" id="btn-fill-sample-folder" style="padding:2px 8px; font-size:0.75rem;">
+                      ⚡ sample 폴더 경로 자동 채우기
+                    </button>
+                  </div>
                 </div>
-                <input type="text" id="builder-folder-path" value="c:\AG\concordance\sample" placeholder="예: c:\AG\concordance\sample 또는 원하는 말뭉치 폴더 경로" />
+                <input type="text" id="builder-folder-path" value="sample" placeholder="예: sample 또는 원하는 말뭉치 폴더 경로 ([📂 폴더 찾아보기...] 클릭)" />
                 <span style="font-size:0.75rem; color:#475569;">
-                  ※ 지정한 폴더 및 <strong>모든 하위 폴더(Subdirectories) 내의 텍스트(.txt, .xml, .json 등)를 재귀적으로 자동 탐색</strong>하여 변환합니다.
+                  ※ 지정한 폴더 및 <strong>모든 하위 폴더(Subdirectories) 내의 텍스트(.txt, .xml, .json 등)를 재귀적으로 자동 탐색</strong>하여 변환합니다. (외부 Python 설치 없이 내장 엔진으로 즉시 변환)
                 </span>
               </div>
               <div class="builder-form-row">

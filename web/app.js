@@ -402,8 +402,18 @@ let isSearchInProgress = false;
       automata.reset();
       automata.feedRawText(q);
       searchInput.value = q;
-      selectMode.value = mode;
-      selectLayer.value = layer;
+      if (selectMode) selectMode.value = mode;
+      if (selectLayer) selectLayer.value = layer;
+
+      // Sync target/method checkboxes with preset mode
+      if (chkTargetSurface) chkTargetSurface.checked = (mode === 'all' || mode === 'surface' || mode === 'jamo' || mode === 'regex');
+      if (chkTargetMorph) chkTargetMorph.checked = (mode === 'all' || mode === 'morph' || mode === 'regex');
+      if (chkTargetSense) chkTargetSense.checked = (mode === 'all' || mode === 'sense');
+      if (chkTargetSyntax) chkTargetSyntax.checked = (mode === 'all' || mode === 'syntax');
+      if (chkMethodJamo) chkMethodJamo.checked = (mode === 'jamo' || (q.includes('[') && q.includes(']') && q.includes('/')));
+      if (chkMethodRegex) chkMethodRegex.checked = (mode === 'regex');
+      updateSearchMethodSummaryLabel();
+
       selectedDocIds = new Set(['ALL']);
       updateDocSelectorTriggerLabel();
       updateKbStatus();
@@ -460,6 +470,15 @@ let isSearchInProgress = false;
         selectLayer.options[0].textContent = `전체 말뭉치 (${data.total_sentences.toLocaleString()}문장)`;
       }
       updateDocSelectorTriggerLabel();
+
+      const navTabMapping = document.getElementById('nav-tab-mapping');
+      if (navTabMapping) {
+        navTabMapping.textContent = `🗂️ 원본 파일 ↔ 데이터베이스 매칭 테이블 (${data.total_source_files || 0}종)`;
+      }
+      const navTabDocs = document.getElementById('nav-tab-docs');
+      if (navTabDocs) {
+        navTabDocs.textContent = `📚 구축 데이터베이스 문서 목록 (${data.total_documents || 0}종)`;
+      }
 
       const mapTbody = document.getElementById('mapping-tbody');
       mapTbody.innerHTML = data.source_files
@@ -2405,7 +2424,7 @@ let isSearchInProgress = false;
               .map(
                 (ej) => `
               <div class="eojeol-card">
-                <div class="eojeol-surface">${escapeHtml(ej.surface || '')} <small style="color:#64748b; font-weight:400;">${escapeHtml(ej.ej_id || '')}</small></div>
+                <div class="eojeol-surface">${escapeHtml(ej.surface || ej.word || '')} <small style="color:#64748b; font-weight:400;">${escapeHtml(ej.ej_id || ej.id || '')}</small></div>
                 ${ej.morph ? `<div class="eojeol-morph"><strong>[형태]</strong> ${escapeHtml(ej.morph)}</div>` : ''}
                 ${ej.sense ? `<div class="eojeol-sense"><strong>[의미]</strong> ${escapeHtml(ej.sense)}</div>` : ''}
               </div>
@@ -2527,7 +2546,7 @@ let isSearchInProgress = false;
     });
   }
 
-    const btnQuickGotoBuilder = document.getElementById('btn-quick-goto-builder');
+  const btnQuickGotoBuilder = document.getElementById('btn-quick-goto-builder');
   if (btnQuickGotoBuilder) {
     btnQuickGotoBuilder.addEventListener('click', () => {
       document.querySelector('.nav-tab[data-tab="tab-build-db"]').click();
@@ -2536,8 +2555,28 @@ let isSearchInProgress = false;
   const btnFillSampleFolder = document.getElementById('btn-fill-sample-folder');
   if (btnFillSampleFolder) {
     btnFillSampleFolder.addEventListener('click', () => {
-      if (builderFolderPath) builderFolderPath.value = 'c:\\AG\\concordance\\sample';
+      if (builderFolderPath) builderFolderPath.value = 'sample';
       if (builderDbName) builderDbName.value = 'concordance.corpdb';
+    });
+  }
+  const btnBrowseFolder = document.getElementById('btn-browse-folder');
+  if (btnBrowseFolder) {
+    btnBrowseFolder.addEventListener('click', async () => {
+      try {
+        btnBrowseFolder.disabled = true;
+        btnBrowseFolder.textContent = '⏳ 폴더 창 여는 중...';
+        const res = await fetch('/api/system/pick-folder', { method: 'POST' });
+        const data = await res.json();
+        if (data.ok && data.folder_path && builderFolderPath) {
+          builderFolderPath.value = data.folder_path;
+          builderFolderPath.focus();
+        }
+      } catch (e) {
+        console.warn('Folder picker error:', e);
+      } finally {
+        btnBrowseFolder.disabled = false;
+        btnBrowseFolder.textContent = '📂 폴더 찾아보기...';
+      }
     });
   }
 
@@ -2555,8 +2594,8 @@ let isSearchInProgress = false;
 
   // 표준 기본 브라우저 프리셋 (API 응답 지연이나 백엔드 오프라인 시에도 즉시 표시)
   const DEFAULT_BROWSERS = [
-    { id: 'chrome', name: 'Google Chrome', path: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', installed: true },
-    { id: 'msedge', name: 'Microsoft Edge', path: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', installed: true },
+    { id: 'msedge', name: 'Microsoft Edge (독립 앱 창 모드 권장)', path: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', installed: true },
+    { id: 'chrome', name: 'Google Chrome (독립 앱 창 모드 지원)', path: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', installed: true },
     { id: 'whale', name: 'Naver Whale (네이버 웨일)', path: 'C:\\Program Files\\Naver\\Naver Whale\\Application\\whale.exe', installed: true },
     { id: 'firefox', name: 'Mozilla Firefox', path: 'C:\\Program Files\\Mozilla Firefox\\firefox.exe', installed: false },
     { id: 'brave', name: 'Brave Browser', path: '', installed: false },
@@ -2691,7 +2730,7 @@ let isSearchInProgress = false;
           open_now: '1',
         });
 
-        const res = await fetch(`/api/system/switch-browser?${params.toString()}`, { method: 'POST' });
+        await fetch(`/api/system/switch-browser?${params.toString()}`, { method: 'POST' });
         if (setDefault) {
           currentConfigBrowser = browserId;
           alert(`기본 브라우저가 '${targetBrowser ? targetBrowser.name : browserId}'(으)로 변경 저장되었습니다!\n선택하신 브라우저에서 검색기 창을 열었습니다.`);
@@ -2711,14 +2750,6 @@ let isSearchInProgress = false;
       }
     });
   }
-
-  // 초기 로드 시 백그라운드 프리패치
-  fetchInstalledBrowsersAsync();
-
-  loadOverview();
-  pollBuildStatus();
-})();
-
 
   // =========================================================================
   // 말뭉치 삭제 및 원문 코퍼스 재구축(Rebuild) 연동 기능
@@ -2752,7 +2783,17 @@ let isSearchInProgress = false;
       // 재구축 지원: 삭제된 문서들의 원본 파일 경로 기억
       if (data.deleted_items && data.deleted_items.length > 0) {
         const first = data.deleted_items[0];
-        lastRebuildSourcePath = first.source_files || '';
+        let srcPath = first.source_files || '';
+        try {
+          const arr = JSON.parse(srcPath);
+          if (Array.isArray(arr) && arr.length > 0) {
+            srcPath = arr[0];
+          }
+        } catch (_) {}
+        if (srcPath && !srcPath.includes(':') && !srcPath.startsWith('/')) {
+          srcPath = `sample/${srcPath}`;
+        }
+        lastRebuildSourcePath = srcPath;
         const btnFillRebuild = document.getElementById('btn-fill-rebuild-target');
         if (btnFillRebuild && lastRebuildSourcePath) {
           btnFillRebuild.style.display = 'inline-flex';
@@ -2775,10 +2816,17 @@ let isSearchInProgress = false;
     const inputFolder = document.getElementById('builder-folder-path');
     if (inputFolder) {
       let suggested = doc.source_files_list || '';
-      // sample 폴더 관련이면 절대경로 형태 채우기
-      if (suggested && !suggested.includes(':') && !suggested.startsWith('/')) {
-        suggested = `c:\\AG\\concordance\\sample`;
+      try {
+        const arr = JSON.parse(suggested);
+        if (Array.isArray(arr) && arr.length > 0) {
+          suggested = arr.length > 1 ? 'sample' : `sample/${arr[0]}`;
+        }
+      } catch (_) {}
+      // sample 폴더 관련이면 상대경로 형태 채우기
+      if (suggested && !suggested.includes(':') && !suggested.startsWith('/') && !suggested.startsWith('sample')) {
+        suggested = `sample/${suggested}`;
       }
+      if (!suggested) suggested = 'sample';
       inputFolder.value = suggested;
       inputFolder.focus();
     }
@@ -2863,3 +2911,8 @@ let isSearchInProgress = false;
       }
     });
   }
+
+  // 초기 로드 시 백그라운드 프리패치 및 데이터 로드
+  fetchInstalledBrowsersAsync();
+  loadOverview();
+})();

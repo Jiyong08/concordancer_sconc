@@ -1,4 +1,4 @@
-# Databases & corpdb files
+# Databases & corpdb files (기본 말뭉치 및 DB 데이터 제외)
 db/
 *.corpdb
 *.db
@@ -15,16 +15,18 @@ __pycache__/
 *$py.class
 scratch/
 
-# User private sample corpus & internal worklog/requirements docs
+# User private sample corpus & internal task instruction/worklog docs (작업 지시 및 내부 기록 md 파일 제외)
 sample/
 REQUIREMENTS.md
 ARCHITECTURE.md
 WORKLOG.md
-*.pdf
 CORPUS_DB_MAPPING.md
+LAYOUT_AND_JUMP_IMPROVEMENT.md
+*.pdf
 build_sample_db.py
 /KoPubWorld Dotum*
 /run_concordance.*
+sconc_config.json
 
 # External 97MB bundle (extracted essentials are in assets/)
 HNI_MMK_Kug_1.2/
@@ -39,4 +41,6 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Ignore other executables EXCEPT the standalone root sconc.exe
 *.exe
+!/sconc.exe

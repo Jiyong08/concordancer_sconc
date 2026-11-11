@@ -1,4 +1,11 @@
+mod builder;
 mod jamo_table;
+
+const EMBEDDED_PUA_TABLE_JSON: &str = include_str!("../../assets/data/pua_table.json");
+const EMBEDDED_INDEX_HTML: &[u8] = include_bytes!("../../web/index.html");
+const EMBEDDED_STYLES_CSS: &[u8] = include_bytes!("../../web/styles.css");
+const EMBEDDED_HANGUL_AUTOMATA_JS: &[u8] = include_bytes!("../../web/hangul_automata.js");
+const EMBEDDED_APP_JS: &[u8] = include_bytes!("../../web/app.js");
 
 use jamo_table::{decompose_l_cp, decompose_t_cp, decompose_v_cp};
 use regex::Regex;
@@ -8,8 +15,7 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::io::{BufRead, BufReader};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -101,7 +107,8 @@ impl MemoryProfile {
     }
 }
 
-struct Normalizer {
+#[derive(Clone)]
+pub struct Normalizer {
     pua_to_nfd: HashMap<char, String>,
     compat_to_nfd: HashMap<char, char>,
     jong_to_choseong: HashMap<char, char>,
@@ -150,15 +157,15 @@ enum BracketQueryToken {
 }
 
 impl Normalizer {
-    fn new(pua_json_path: &Path) -> Self {
+    pub fn new(pua_json_path: &Path) -> Self {
         let mut pua_to_nfd = HashMap::new();
-        if let Ok(content) = fs::read_to_string(pua_json_path) {
-            if let Ok(map) = serde_json::from_str::<HashMap<String, String>>(&content) {
-                for (hex_key, nfd_val) in map {
-                    if let Ok(cp) = u32::from_str_radix(&hex_key, 16) {
-                        if let Some(ch) = char::from_u32(cp) {
-                            pua_to_nfd.insert(ch, nfd_val);
-                        }
+        let raw_json = fs::read_to_string(pua_json_path)
+            .unwrap_or_else(|_| EMBEDDED_PUA_TABLE_JSON.to_string());
+        if let Ok(map) = serde_json::from_str::<HashMap<String, String>>(&raw_json) {
+            for (hex_key, nfd_val) in map {
+                if let Ok(cp) = u32::from_str_radix(&hex_key, 16) {
+                    if let Some(ch) = char::from_u32(cp) {
+                        pua_to_nfd.insert(ch, nfd_val);
                     }
                 }
             }
@@ -259,7 +266,19 @@ impl Normalizer {
         }
     }
 
-    fn to_nfd_norm(&self, text: &str) -> String {
+    pub fn pua_to_unicode(&self, text: &str) -> String {
+        let mut out = String::with_capacity(text.len());
+        for ch in text.chars() {
+            if let Some(nfd) = self.pua_to_nfd.get(&ch) {
+                out.push_str(nfd);
+            } else {
+                out.push(ch);
+            }
+        }
+        out
+    }
+
+    pub fn to_nfd_norm(&self, text: &str) -> String {
         let mut out = Vec::with_capacity(text.len() * 2);
         for ch in text.chars() {
             self.decompose_char(ch, &mut out);
@@ -881,6 +900,7 @@ struct SegmentDetailResponse {
 #[derive(Debug, Deserialize)]
 struct EditSegmentRequest {
     segment_id: i64,
+    text_raw: Option<String>,
     text_unicode: Option<String>,
     morph_flat: Option<String>,
     sense_flat: Option<String>,
@@ -1426,6 +1446,30 @@ fn expand_bracket_syntax_to_regex(query: &str) -> String {
     out
 }
 
+fn check_word_boundary(
+    display_chars: &[char],
+    orig_start: usize,
+    orig_end: usize,
+    has_leading_space: bool,
+    has_trailing_space: bool,
+) -> bool {
+    if has_leading_space && orig_start > 0 {
+        if let Some(&prev_c) = display_chars.get(orig_start - 1) {
+            if !prev_c.is_whitespace() && !prev_c.is_ascii_punctuation() {
+                return false;
+            }
+        }
+    }
+    if has_trailing_space && orig_end < display_chars.len() {
+        if let Some(&next_c) = display_chars.get(orig_end) {
+            if !next_c.is_whitespace() && !next_c.is_ascii_punctuation() {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 fn handle_search(
     state: &AppState,
     params: &HashMap<String, String>,
@@ -1434,9 +1478,13 @@ fn handle_search(
     let my_search_seq = state.latest_search_seq.fetch_add(1, Ordering::Relaxed) + 1;
 
     let raw_query = params.get("q").map(|s| s.as_str()).unwrap_or("");
-
-
-    let core_query = raw_query;
+    let has_leading_space = raw_query.starts_with(' ') && !raw_query.trim().is_empty();
+    let has_trailing_space = raw_query.ends_with(' ') && !raw_query.trim().is_empty();
+    let core_query = if has_leading_space || has_trailing_space {
+        raw_query.trim()
+    } else {
+        raw_query
+    };
 
     let targets_param = params.get("targets").map(|s| s.as_str()).unwrap_or("");
     let methods_param = params.get("methods").map(|s| s.as_str()).unwrap_or("");
@@ -1892,6 +1940,7 @@ fn handle_search(
 
                 // 1-3) Plain text syllable/PUA matching
                 if use_text && matched_span.is_none() {
+                    let display_chars: Vec<char> = display_text.chars().collect();
                     let (norm_chars, char_map) =
                         state.normalizer.to_nfd_norm_with_map(&display_text);
                     let candidates = find_all_char_subslices(&norm_chars, &norm_query_chars);
@@ -1909,6 +1958,16 @@ fn handle_search(
                             .map(|&idx| idx + 1)
                             .unwrap_or(orig_start + 1);
 
+                        if !check_word_boundary(
+                            &display_chars,
+                            orig_start,
+                            orig_end,
+                            has_leading_space,
+                            has_trailing_space,
+                        ) {
+                            continue;
+                        }
+
                         matched_span = Some((orig_start, orig_end, "원문/음절"));
                         break;
                     }
@@ -1917,8 +1976,16 @@ fn handle_search(
                         if let Some(byte_pos) = display_text.find(core_query) {
                             let sc = display_text[..byte_pos].chars().count();
                             let ec = sc + core_query.chars().count();
-                            matched_span = Some((sc, ec, "원문(PUA)"));
-                        } else {
+                            if check_word_boundary(
+                                &display_chars,
+                                sc,
+                                ec,
+                                has_leading_space,
+                                has_trailing_space,
+                            ) {
+                                matched_span = Some((sc, ec, "원문(PUA)"));
+                            }
+                        } else if !has_leading_space && !has_trailing_space {
                             matched_span =
                                 Some((0, display_text.chars().count().min(6), "원문(PUA)"));
                         }
@@ -2206,7 +2273,13 @@ fn handle_search_stream(
         let my_search_seq = state_worker.latest_search_seq.fetch_add(1, Ordering::Relaxed) + 1;
 
         let raw_query = params_worker.get("q").map(|s| s.as_str()).unwrap_or("");
-        let core_query = raw_query;
+        let has_leading_space = raw_query.starts_with(' ') && !raw_query.trim().is_empty();
+        let has_trailing_space = raw_query.ends_with(' ') && !raw_query.trim().is_empty();
+        let core_query = if has_leading_space || has_trailing_space {
+            raw_query.trim()
+        } else {
+            raw_query
+        };
 
         let targets_param = params_worker.get("targets").map(|s| s.as_str()).unwrap_or("");
         let methods_param = params_worker.get("methods").map(|s| s.as_str()).unwrap_or("");
@@ -2641,6 +2714,7 @@ fn handle_search_stream(
                     }
 
                     if use_text && matched_span.is_none() {
+                        let display_chars: Vec<char> = display_text.chars().collect();
                         let (norm_chars, char_map) = state_worker.normalizer.to_nfd_norm_with_map(&display_text);
                         let candidates = find_all_char_subslices(&norm_chars, &norm_query_chars);
 
@@ -2655,6 +2729,15 @@ fn handle_search_stream(
                                 .get(n_end.saturating_sub(1))
                                 .map(|&idx| idx + 1)
                                 .unwrap_or(orig_start + 1);
+                            if !check_word_boundary(
+                                &display_chars,
+                                orig_start,
+                                orig_end,
+                                has_leading_space,
+                                has_trailing_space,
+                            ) {
+                                continue;
+                            }
                             matched_span = Some((orig_start, orig_end, "원문/음절"));
                             break;
                         }
@@ -2663,8 +2746,16 @@ fn handle_search_stream(
                             if let Some(byte_pos) = display_text.find(core_query) {
                                 let sc = display_text[..byte_pos].chars().count();
                                 let ec = sc + core_query.chars().count();
-                                matched_span = Some((sc, ec, "원문(PUA)"));
-                            } else {
+                                if check_word_boundary(
+                                    &display_chars,
+                                    sc,
+                                    ec,
+                                    has_leading_space,
+                                    has_trailing_space,
+                                ) {
+                                    matched_span = Some((sc, ec, "원문(PUA)"));
+                                }
+                            } else if !has_leading_space && !has_trailing_space {
                                 matched_span = Some((0, display_text.chars().count().min(6), "원문(PUA)"));
                             }
                         }
@@ -2787,14 +2878,30 @@ fn handle_search_stream(
 
                 // 4. Syntax layer matching
                 if use_syntax && matched_span.is_none() && !syntax_tree.is_empty() {
-                    if use_regex && compiled_regex.is_some() {
-                        let re = compiled_regex.as_ref().unwrap();
-                        if re.is_match(&syntax_tree) {
-                            matched_span = Some((0, display_text.chars().count().min(10), "구문/정규식"));
+                    let first_word_len = display_text
+                        .split_whitespace()
+                        .next()
+                        .map(|w| w.chars().count())
+                        .unwrap_or(6);
+
+                    if (use_jamo || bracket_tokens.is_some()) && bracket_tokens.is_some() {
+                        let b_tokens = bracket_tokens.as_ref().unwrap();
+                        let syn_units = state_worker.normalizer.tokenize_text_units(&syntax_tree);
+                        if find_bracket_query_match(b_tokens, &syn_units).is_some() {
+                            matched_span = Some((0, first_word_len, "구문/자소"));
                         }
                     }
-                    if use_text && matched_span.is_none() && syntax_tree.contains(core_query) {
-                        matched_span = Some((0, display_text.chars().count().min(10), "구문표지"));
+                    if use_regex && compiled_regex.is_some() && matched_span.is_none() {
+                        let re = compiled_regex.as_ref().unwrap();
+                        if re.is_match(&syntax_tree) {
+                            matched_span = Some((0, first_word_len, "구문/정규식"));
+                        }
+                    }
+                    if use_text && matched_span.is_none() {
+                        let norm_syn = state_worker.normalizer.normalize_morph_str(&syntax_tree);
+                        if syntax_tree.contains(core_query) || norm_syn.contains(&norm_morph_query) {
+                            matched_span = Some((0, first_word_len, "구문분석"));
+                        }
                     }
                 }
 
@@ -3114,55 +3221,85 @@ fn handle_segment_edit(
         Err(e) => return json_response(&serde_json::json!({ "error": e.to_string() }), 500),
     };
 
-    let _ = conn.execute(
-        "CREATE TABLE IF NOT EXISTS segment_edits (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            segment_id INTEGER,
-            original_text_raw TEXT,
-            edited_text_raw TEXT,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )",
-        [],
-    );
+    let _ = builder::init_db_schema(&conn);
 
-    let original: Option<String> = conn
+    let orig_row: Option<(String, String)> = conn
         .query_row(
-            "SELECT text_unicode FROM segments WHERE segment_id = ?",
+            "SELECT text_raw, morph_flat FROM segments WHERE segment_id = ?",
             params![payload.segment_id],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .ok();
 
-    if let Some(ref new_val) = payload.text_unicode {
+    let (orig_raw, orig_morph) = orig_row.unwrap_or_default();
+    let new_raw = payload
+        .text_raw
+        .as_ref()
+        .or(payload.text_unicode.as_ref())
+        .cloned()
+        .unwrap_or_else(|| orig_raw.clone());
+    let new_morph = payload
+        .morph_flat
+        .clone()
+        .unwrap_or_else(|| orig_morph.clone());
+
+    let now_str = {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        format!("{}", secs)
+    };
+
+    let _ = conn.execute(
+        "INSERT OR REPLACE INTO segment_edits
+         (segment_id, original_text_raw, original_morph_flat, edited_text_raw, edited_morph_flat, updated_at, synced_to_source)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0)",
+        params![
+            payload.segment_id,
+            orig_raw,
+            orig_morph,
+            new_raw,
+            new_morph,
+            now_str
+        ],
+    );
+
+    if let Some(ref raw_val) = payload.text_raw {
+        let uni = state.normalizer.pua_to_unicode(raw_val);
+        let nfd = state.normalizer.to_nfd_norm(&uni);
         let _ = conn.execute(
-            "INSERT INTO segment_edits (segment_id, original_text_raw, edited_text_raw) VALUES (?, ?, ?)",
-            params![payload.segment_id, original, new_val],
+            "UPDATE segments SET text_raw = ?1, text_unicode = ?2, text_nfd_norm = ?3, is_modified = 1 WHERE segment_id = ?4",
+            params![raw_val, uni, nfd, payload.segment_id],
         );
+    } else if let Some(ref new_val) = payload.text_unicode {
+        let uni = state.normalizer.pua_to_unicode(new_val);
+        let nfd = state.normalizer.to_nfd_norm(&uni);
         let _ = conn.execute(
-            "UPDATE segments SET text_unicode = ?, text_display = ? WHERE segment_id = ?",
-            params![new_val, new_val, payload.segment_id],
+            "UPDATE segments SET text_unicode = ?1, text_nfd_norm = ?2, is_modified = 1 WHERE segment_id = ?3",
+            params![uni, nfd, payload.segment_id],
         );
     }
     if let Some(ref m) = payload.morph_flat {
         let _ = conn.execute(
-            "UPDATE segments SET morph_flat = ? WHERE segment_id = ?",
+            "UPDATE segments SET morph_flat = ?1, is_modified = 1 WHERE segment_id = ?2",
             params![m, payload.segment_id],
         );
     }
     if let Some(ref s) = payload.sense_flat {
         let _ = conn.execute(
-            "UPDATE segments SET sense_flat = ? WHERE segment_id = ?",
+            "UPDATE segments SET sense_flat = ?1, is_modified = 1 WHERE segment_id = ?2",
             params![s, payload.segment_id],
         );
     }
     if let Some(ref st) = payload.syntax_tree {
         let _ = conn.execute(
-            "UPDATE segments SET syntax_tree = ? WHERE segment_id = ?",
+            "UPDATE segments SET syntax_tree = ?1, is_modified = 1 WHERE segment_id = ?2",
             params![st, payload.segment_id],
         );
     }
 
-    json_response(&serde_json::json!({ "success": true }), 200)
+    json_response(&serde_json::json!({ "ok": true, "success": true }), 200)
 }
 
 #[derive(Debug, Deserialize)]
@@ -3184,10 +3321,24 @@ fn handle_build_db(
         Err(e) => return json_response(&serde_json::json!({ "error": e.to_string() }), 400),
     };
 
-    let folder = payload.folder_path.trim().to_string();
-    if folder.is_empty() || !Path::new(&folder).exists() {
+    let raw_folder = payload.folder_path.trim().to_string();
+    let resolved_folder = {
+        let p = PathBuf::from(&raw_folder);
+        if p.exists() {
+            p
+        } else {
+            let rel = state.root_dir.join(&raw_folder);
+            if rel.exists() {
+                rel
+            } else {
+                p
+            }
+        }
+    };
+
+    if raw_folder.is_empty() || !resolved_folder.exists() {
         return json_response(
-            &serde_json::json!({ "error": format!("지정한 폴더가 존재하지 않습니다: {}", folder) }),
+            &serde_json::json!({ "error": format!("지정한 폴더가 존재하지 않습니다: {}", raw_folder) }),
             400,
         );
     }
@@ -3214,141 +3365,70 @@ fn handle_build_db(
     }
 
     let is_new_db = !target_db.exists();
+    let folder_str = resolved_folder.to_string_lossy().into_owned();
     mgr.progress = DbBuildProgress {
         is_running: true,
         status: "RUNNING".to_string(),
         target_db_path: target_db.to_string_lossy().into_owned(),
         is_new_db_file: is_new_db,
-        log_lines: vec![format!("[시작] 말뭉치 폴더 스캔 시작: {}", folder)],
+        log_lines: vec![format!("[시작] 내장 Rust 파서로 말뭉치 폴더 스캔 시작: {}", folder_str)],
         ..DbBuildProgress::default()
     };
 
-    let py_script = state.root_dir.join("corpus_builder.py");
-    let target_db_str = target_db.to_string_lossy().into_owned();
-
-    let mut cmd = Command::new("python");
-    cmd.current_dir(&state.root_dir)
-        .env("PYTHONUTF8", "1")
-        .args([
-            py_script.to_str().unwrap_or("corpus_builder.py"),
-            "--folder",
-            &folder,
-            "--db",
-            &target_db_str,
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    let mut child = match cmd.spawn() {
-        Ok(c) => c,
-        Err(e) => {
-            mgr.progress.is_running = false;
-            mgr.progress.status = "ERROR".to_string();
-            mgr.progress.error_message = Some(e.to_string());
-            return json_response(&serde_json::json!({ "error": format!("Python 프로세스 실행 실패: {}", e) }), 500);
-        }
-    };
-
-    let stdout = child.stdout.take();
-    mgr.child = Some(child);
+    let initial_prog = mgr.progress.clone();
+    drop(mgr);
 
     let db_builder_arc = Arc::clone(&state.db_builder);
+    let normalizer_clone = state.normalizer.clone();
 
-    // 백그라운드 모니터링 스레드
+    // 백그라운드 네이티브 Rust DB 빌더 스레드 (외부 Python 불필요)
     std::thread::spawn(move || {
-        let mut final_json_str = String::new();
-
-        if let Some(out) = stdout {
-            let reader = BufReader::new(out);
-            for line_res in reader.lines() {
-                if let Ok(line) = line_res {
-                    if line.starts_with("PROGRESS:") {
-                        let json_part = &line["PROGRESS:".len()..];
-                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_part) {
-                            let mut m = db_builder_arc.lock().unwrap();
-                            if !m.progress.is_running {
-                                break;
-                            }
-                            if let Some(total) = val.get("total_files").and_then(|v| v.as_u64()) {
-                                m.progress.total_files = total as usize;
-                            }
-                            if let Some(proc) = val.get("processed_files").and_then(|v| v.as_u64()) {
-                                m.progress.processed_files = proc as usize;
-                            }
-                            if let Some(pct) = val.get("percent").and_then(|v| v.as_f64()) {
-                                m.progress.percent = pct;
-                            }
-                            if let Some(cf) = val.get("current_file").and_then(|v| v.as_str()) {
-                                m.progress.current_file = cf.to_string();
-                            }
-                            if let Some(cd) = val.get("current_doc_id").and_then(|v| v.as_str()) {
-                                if !cd.is_empty() && !m.progress.newly_created_doc_ids.contains(&cd.to_string()) {
-                                    m.progress.newly_created_doc_ids.push(cd.to_string());
-                                }
-                                m.progress.current_doc_id = cd.to_string();
-                            }
-                            if let Some(sents) = val.get("sentences_imported").and_then(|v| v.as_u64()) {
-                                m.progress.sentences_imported = sents as usize;
-                            }
-                            if let Some(eojeols) = val.get("eojeols_imported").and_then(|v| v.as_u64()) {
-                                m.progress.eojeols_imported = eojeols as usize;
-                            }
-                            if let Some(sk) = val.get("skipped_files").and_then(|v| v.as_u64()) {
-                                m.progress.skipped_files = sk as usize;
-                            }
-                            if let Some(msg) = val.get("message").and_then(|v| v.as_str()) {
-                                if !msg.is_empty() {
-                                    if m.progress.log_lines.len() >= 100 {
-                                        m.progress.log_lines.remove(0);
-                                    }
-                                    m.progress.log_lines.push(msg.to_string());
-                                }
-                            }
-                        }
-                    } else if line.starts_with('{') || !final_json_str.is_empty() {
-                        final_json_str.push_str(&line);
-                    } else if !line.trim().is_empty() {
-                        let mut m = db_builder_arc.lock().unwrap();
-                        if m.progress.log_lines.len() >= 100 {
-                            m.progress.log_lines.remove(0);
-                        }
-                        m.progress.log_lines.push(line);
-                    }
-                }
-            }
-        }
-
-        let mut m = db_builder_arc.lock().unwrap();
-        if let Some(mut ch) = m.child.take() {
-            let status_res = ch.wait();
-            if m.progress.status == "RUNNING" {
-                match status_res {
-                    Ok(st) if st.success() => {
-                        m.progress.is_running = false;
-                        m.progress.status = "COMPLETED".to_string();
-                        m.progress.percent = 100.0;
-                        m.progress.log_lines.push("[완료] 데이터베이스 생성이 성공적으로 완료되었습니다!".to_string());
-                        if let Ok(summary) = serde_json::from_str::<serde_json::Value>(&final_json_str) {
-                            m.progress.result_summary = Some(summary);
-                        }
-                    }
-                    Ok(st) => {
-                        m.progress.is_running = false;
-                        m.progress.status = "ERROR".to_string();
-                        m.progress.error_message = Some(format!("프로세스가 종료 코드 {:?}로 비정상 종료되었습니다.", st.code()));
-                    }
-                    Err(e) => {
-                        m.progress.is_running = false;
-                        m.progress.status = "ERROR".to_string();
-                        m.progress.error_message = Some(e.to_string());
-                    }
-                }
-            }
+        if let Err(e) = builder::build_folder_into_db_native(
+            &resolved_folder,
+            &target_db,
+            &normalizer_clone,
+            &db_builder_arc,
+        ) {
+            let mut m = db_builder_arc.lock().unwrap();
+            m.progress.is_running = false;
+            m.progress.status = "ERROR".to_string();
+            m.progress.error_message = Some(e);
         }
     });
 
-    let initial_prog = mgr.progress.clone();
     json_response(&initial_prog, 200)
+}
+
+fn handle_pick_folder(state: &AppState) -> Response<std::io::Cursor<Vec<u8>>> {
+    #[cfg(target_os = "windows")]
+    {
+        let initial_dir = state.root_dir.to_string_lossy().replace('\'', "''");
+        let ps_script = format!(
+            "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; \
+             Add-Type -AssemblyName System.Windows.Forms; \
+             $f = New-Object System.Windows.Forms.FolderBrowserDialog; \
+             $f.Description = '말뭉치 텍스트/XML 파일이 들어 있는 폴더를 선택하세요'; \
+             $f.SelectedPath = '{}'; \
+             $f.ShowNewFolderButton = $false; \
+             if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {{ Write-Output $f.SelectedPath }}",
+            initial_dir
+        );
+        if let Ok(output) = Command::new("powershell")
+            .args(["-NoProfile", "-STA", "-Command", &ps_script])
+            .output()
+        {
+            let selected = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !selected.is_empty() {
+                return json_response(&serde_json::json!({ "ok": true, "folder_path": selected }), 200);
+            }
+        }
+        return json_response(&serde_json::json!({ "ok": false, "cancelled": true }), 200);
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = state;
+        json_response(&serde_json::json!({ "ok": false, "error": "Windows 환경에서만 폴더 선택 대화상자를 지원합니다." }), 400)
+    }
 }
 
 fn handle_build_db_status(state: &AppState) -> Response<std::io::Cursor<Vec<u8>>> {
@@ -3779,8 +3859,19 @@ fn handle_source_jump(
 }
 
 fn serve_static_file(path: &Path, content_type: &str) -> Response<std::io::Cursor<Vec<u8>>> {
-    match fs::read(path) {
-        Ok(bytes) => {
+    serve_static_or_embedded(path, None, content_type)
+}
+
+fn serve_static_or_embedded(
+    path: &Path,
+    embedded: Option<&'static [u8]>,
+    content_type: &str,
+) -> Response<std::io::Cursor<Vec<u8>>> {
+    let bytes_opt = fs::read(path)
+        .ok()
+        .or_else(|| embedded.map(|b| b.to_vec()));
+    match bytes_opt {
+        Some(bytes) => {
             let header =
                 Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes()).unwrap();
             let no_cache =
@@ -3792,7 +3883,7 @@ fn serve_static_file(path: &Path, content_type: &str) -> Response<std::io::Curso
                 .with_header(no_cache)
                 .with_header(pragma)
         }
-        Err(_) => Response::from_string("404 Not Found").with_status_code(StatusCode(404)),
+        None => Response::from_string("404 Not Found").with_status_code(StatusCode(404)),
     }
 }
 
@@ -3804,21 +3895,28 @@ fn find_root_dir() -> PathBuf {
         }
     }
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    if cwd.join("web").join("index.html").exists() {
+    if cwd.join("web").join("index.html").exists() || cwd.join("db").exists() {
         return cwd;
     }
     if let Some(parent) = cwd.parent() {
-        if parent.join("web").join("index.html").exists() {
+        if parent.join("web").join("index.html").exists() || parent.join("db").exists() {
             return parent.to_path_buf();
         }
     }
     if let Ok(exe_path) = env::current_exe() {
-        let mut anc = exe_path.as_path();
-        while let Some(p) = anc.parent() {
-            if p.join("web").join("index.html").exists() {
-                return p.to_path_buf();
+        if let Some(exe_dir) = exe_path.parent() {
+            let mut anc = exe_dir;
+            loop {
+                if anc.join("web").join("index.html").exists() || anc.join("db").exists() {
+                    return anc.to_path_buf();
+                }
+                if let Some(p) = anc.parent() {
+                    anc = p;
+                } else {
+                    break;
+                }
             }
-            anc = p;
+            return exe_dir.to_path_buf();
         }
     }
     cwd
@@ -3881,23 +3979,23 @@ fn detect_installed_browsers() -> Vec<BrowserInfo> {
 
         let candidates = [
             (
-                "chrome",
-                "Google Chrome",
-                vec![
-                    format!("{PF}\\Google\\Chrome\\Application\\chrome.exe", PF=program_files),
-                    format!("{PF86}\\Google\\Chrome\\Application\\chrome.exe", PF86=program_files_x86),
-                    format!("{LocalAppdata}\\Google\\Chrome\\Application\\chrome.exe", LocalAppdata=local_appdata),
-                    format!("{UP}\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe", UP=user_profile),
-                ],
-            ),
-            (
                 "msedge",
-                "Microsoft Edge",
+                "Microsoft Edge (독립 앱 창 모드 권장)",
                 vec![
                     format!("{PF86}\\Microsoft\\Edge\\Application\\msedge.exe", PF86=program_files_x86),
                     format!("{PF}\\Microsoft\\Edge\\Application\\msedge.exe", PF=program_files),
                     format!("{LocalAppdata}\\Microsoft\\Edge\\Application\\msedge.exe", LocalAppdata=local_appdata),
                     format!("{UP}\\AppData\\Local\\Microsoft\\Edge\\Application\\msedge.exe", UP=user_profile),
+                ],
+            ),
+            (
+                "chrome",
+                "Google Chrome (독립 앱 창 모드 지원)",
+                vec![
+                    format!("{PF}\\Google\\Chrome\\Application\\chrome.exe", PF=program_files),
+                    format!("{PF86}\\Google\\Chrome\\Application\\chrome.exe", PF86=program_files_x86),
+                    format!("{LocalAppdata}\\Google\\Chrome\\Application\\chrome.exe", LocalAppdata=local_appdata),
+                    format!("{UP}\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe", UP=user_profile),
                 ],
             ),
             (
@@ -3958,28 +4056,72 @@ fn detect_installed_browsers() -> Vec<BrowserInfo> {
     list
 }
 
-fn launch_specific_browser(browser_path: &str, url: &str) {
+fn is_chromium_based(path_str: &str) -> bool {
+    let low = path_str.to_lowercase();
+    low.contains("msedge.exe")
+        || low.contains("chrome.exe")
+        || low.contains("whale.exe")
+        || low.contains("brave.exe")
+}
+
+fn launch_specific_browser(browser_path: &str, url: &str, app_mode: bool) {
     if !browser_path.is_empty() && Path::new(browser_path).exists() {
-        let _ = Command::new(browser_path).arg(url).spawn();
-    } else {
-        #[cfg(target_os = "windows")]
-        {
-            let _ = Command::new("cmd").args(["/C", "start", "", url]).spawn();
+        if app_mode && is_chromium_based(browser_path) {
+            let _ = Command::new(browser_path)
+                .args([
+                    &format!("--app={}", url),
+                    "--no-proxy-server",
+                    "--window-size=1480,920",
+                ])
+                .spawn();
+        } else if is_chromium_based(browser_path) {
+            let _ = Command::new(browser_path)
+                .args(["--no-proxy-server", url])
+                .spawn();
+        } else {
+            let _ = Command::new(browser_path).arg(url).spawn();
         }
-        #[cfg(target_os = "macos")]
-        {
-            let _ = Command::new("open").arg(url).spawn();
+        return;
+    }
+
+    // browser_path가 지정되지 않은 경우, 독립 실행형 데스크톱 창(App Mode)으로
+    // 공용 네트워크 프록시 차단 없이 실행하기 위해 설치된 Edge/Chrome/Whale을 우선 탐색
+    if app_mode {
+        for b in detect_installed_browsers() {
+            if b.installed && !b.path.is_empty() && is_chromium_based(&b.path) {
+                if Command::new(&b.path)
+                    .args([
+                        &format!("--app={}", url),
+                        "--no-proxy-server",
+                        "--window-size=1480,920",
+                    ])
+                    .spawn()
+                    .is_ok()
+                {
+                    return;
+                }
+            }
         }
-        #[cfg(target_os = "linux")]
-        {
-            let _ = Command::new("xdg-open").arg(url).spawn();
-        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let _ = Command::new("cmd").args(["/C", "start", "", url]).spawn();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = Command::new("open").arg(url).spawn();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = Command::new("xdg-open").arg(url).spawn();
     }
 }
 
 fn open_browser_with_root(url: &str, root_dir: &Path) {
     let cfg = load_sconc_config(root_dir);
-    launch_specific_browser(&cfg.browser_path, url);
+    let use_app_mode = cfg.default_browser != "system" || cfg.browser_path.is_empty();
+    launch_specific_browser(&cfg.browser_path, url, use_app_mode);
 }
 
 fn handle_installed_browsers(state: &AppState) -> Response<std::io::Cursor<Vec<u8>>> {
@@ -4002,7 +4144,7 @@ fn handle_switch_browser(state: &AppState, params: &HashMap<String, String>) -> 
     let set_default = params.get("set_default").map(|s| s == "1" || s == "true").unwrap_or(true);
     let open_now = params.get("open_now").map(|s| s == "1" || s == "true").unwrap_or(true);
     let port = state.port;
-    let url = format!("http://localhost:{}", port);
+    let url = format!("http://127.0.0.1:{}", port);
 
     if set_default {
         let cfg = SconcConfig {
@@ -4013,7 +4155,7 @@ fn handle_switch_browser(state: &AppState, params: &HashMap<String, String>) -> 
     }
 
     if open_now {
-        launch_specific_browser(browser_path, &url);
+        launch_specific_browser(browser_path, &url, browser_id != "system");
     }
 
     let json = serde_json::json!({
@@ -4031,7 +4173,8 @@ fn handle_switch_browser(state: &AppState, params: &HashMap<String, String>) -> 
 fn main() {
     let args: Vec<String> = env::args().collect();
     let mut port: u16 = 8787;
-    let mut auto_open = false;
+    // 단독 실행 파일(sconc.exe)을 더블클릭하여 실행할 때 즉시 창이 열리도록 기본값을 true로 설정
+    let mut auto_open = true;
     for i in 1..args.len() {
         if args[i] == "--port" && i + 1 < args.len() {
             port = args[i + 1].parse().unwrap_or(8787);
@@ -4039,12 +4182,20 @@ fn main() {
         if args[i] == "--open" {
             auto_open = true;
         }
+        if args[i] == "--no-open" || args[i] == "--headless" {
+            auto_open = false;
+        }
     }
 
     let root_dir = find_root_dir();
     let _ = fs::create_dir_all(root_dir.join("db"));
     let db_path = root_dir.join("db").join("concordance.corpdb");
     let web_dir = root_dir.join("web");
+
+    // DB 스키마 자동 초기화 (외부 설치/스크립트 없이도 빈 DB가 즉시 준비되도록 보장)
+    if let Ok(conn) = Connection::open(&db_path) {
+        let _ = builder::init_db_schema(&conn);
+    }
 
     let pua_path = {
         let p1 = root_dir.join("assets").join("data").join("pua_table.json");
@@ -4094,6 +4245,24 @@ fn main() {
     let mem_profile = MemoryProfile::detect();
     let normalizer = Normalizer::new(&pua_path);
 
+    // 만약 DB가 비어 있고 sample 폴더에 말뭉치 파일이 존재한다면 자동으로 초기 DB 구축 수행
+    if let Ok(conn) = Connection::open(&db_path) {
+        let doc_cnt: i64 = conn
+            .query_row("SELECT COUNT(*) FROM documents", [], |r| r.get(0))
+            .unwrap_or(0);
+        let sample_dir = root_dir.join("sample");
+        if doc_cnt == 0 && sample_dir.exists() {
+            println!("  [초기화] DB가 비어 있어 sample 폴더의 말뭉치를 내장 파서로 자동 구축합니다...");
+            let tmp_mgr = Arc::new(Mutex::new(DbBuildManager::new()));
+            {
+                let mut m = tmp_mgr.lock().unwrap();
+                m.progress.is_running = true;
+                m.progress.status = "RUNNING".to_string();
+            }
+            let _ = builder::build_folder_into_db_native(&sample_dir, &db_path, &normalizer, &tmp_mgr);
+        }
+    }
+
     let state = Arc::new(AppState {
         root_dir: root_dir.clone(),
         db_path: db_path.clone(),
@@ -4142,7 +4311,8 @@ fn main() {
     let url = format!("http://127.0.0.1:{}", port);
 
     println!("================================================================");
-    println!("  Concordance — 한국어 통시·공시 다층 말뭉치 통합 검색기 (Rust Engine)");
+    println!("  Concordance (sconc.exe) — 한국어 통시·공시 다층 말뭉치 통합 검색기");
+    println!("  [독립 실행형(Standalone Zero-Install) 애플리케이션 모드]");
     println!("================================================================");
     println!("  * 프로젝트 루트 : {}", root_dir.display());
     println!("  * 데이터베이스  : {}", db_path.display());
@@ -4150,16 +4320,16 @@ fn main() {
         "  * 메모리 프로파일: {} (총 {:.1}GB / 가용 {:.1}GB)",
         mem_profile.tier_label, mem_profile.total_ram_gb, mem_profile.available_ram_gb
     );
-    println!("  * 기본 내장 폰트: KoPubWorld Dotum Medium.ttf + 함초롬바탕(HANBatang.ttf)");
-    println!("  * 접속 주소     : {}", url);
+    println!("  * 내장 DB 빌더  : Rust Native Builder (Python 등 외부 설치 불필요)");
+    println!("  * 로컬 주소     : {} (공용 네트워크 프록시 우회)", url);
     println!("================================================================");
 
     let server = match Server::http(&bind_addr) {
         Ok(s) => s,
         Err(_) => {
-            println!("  [안내] 포트 {}에서 이미 검색기 서버가 실행 중입니다.", port);
+            println!("  [안내] 포트 {}에서 이미 검색기 엔진이 실행 중입니다.", port);
             if auto_open {
-                println!("  [안내] 브라우저로 검색기 화면을 엽니다: {}", url);
+                println!("  [안내] 독립 실행 창을 엽니다: {}", url);
                 open_browser_with_root(&url, &root_dir);
             }
             return;
@@ -4190,6 +4360,7 @@ fn main() {
                 (&Method::Get, "/api/open-editor") | (&Method::Post, "/api/open-editor") => handle_open_editor(&params),
                 (&Method::Get, "/api/system/installed-browsers") => handle_installed_browsers(&state),
                 (&Method::Get, "/api/system/switch-browser") | (&Method::Post, "/api/system/switch-browser") => handle_switch_browser(&state, &params),
+                (&Method::Get, "/api/system/pick-folder") | (&Method::Post, "/api/system/pick-folder") => handle_pick_folder(&state),
                 (&Method::Get, "/api/document/delete") | (&Method::Post, "/api/document/delete") => handle_document_delete(&state, &params),
                 (&Method::Post, "/api/segment/edit") => handle_segment_edit(&state, &mut req),
                 (&Method::Post, "/api/build-db") | (&Method::Post, "/api/build_db") => handle_build_db(&state, &mut req),
@@ -4213,20 +4384,24 @@ fn main() {
                 (&Method::Get, "/fonts/KoPubWorldDotumProMedium.otf") => {
                     serve_static_file(&state.kopub_otf_path, "font/otf")
                 }
-                (&Method::Get, "/") | (&Method::Get, "/index.html") => serve_static_file(
+                (&Method::Get, "/") | (&Method::Get, "/index.html") => serve_static_or_embedded(
                     &state.web_dir.join("index.html"),
+                    Some(EMBEDDED_INDEX_HTML),
                     "text/html; charset=utf-8",
                 ),
-                (&Method::Get, "/styles.css") => serve_static_file(
+                (&Method::Get, "/styles.css") => serve_static_or_embedded(
                     &state.web_dir.join("styles.css"),
+                    Some(EMBEDDED_STYLES_CSS),
                     "text/css; charset=utf-8",
                 ),
-                (&Method::Get, "/hangul_automata.js") => serve_static_file(
+                (&Method::Get, "/hangul_automata.js") => serve_static_or_embedded(
                     &state.web_dir.join("hangul_automata.js"),
+                    Some(EMBEDDED_HANGUL_AUTOMATA_JS),
                     "application/javascript; charset=utf-8",
                 ),
-                (&Method::Get, "/app.js") => serve_static_file(
+                (&Method::Get, "/app.js") => serve_static_or_embedded(
                     &state.web_dir.join("app.js"),
+                    Some(EMBEDDED_APP_JS),
                     "application/javascript; charset=utf-8",
                 ),
                 _ => Response::from_string("404 Not Found").with_status_code(StatusCode(404)),
@@ -4360,7 +4535,7 @@ mod tests {
     }
 
     #[test]
-    fn test_space_literal_character_match() {
+    fn test_space_literal_character_match_and_boundary() {
         let normalizer = Normalizer::new(std::path::Path::new("assets/data/pua_table.json"));
         let query = "하도 말이";
         let query_nfd = normalizer.to_nfd_norm(query);
@@ -4375,5 +4550,51 @@ mod tests {
         let orig_end = char_map.get(e.saturating_sub(1)).map(|&idx| idx + 1).unwrap_or(orig_start + 1);
         let matched: String = text.chars().skip(orig_start).take(orig_end - orig_start).collect();
         assert_eq!(matched, "하도 말이");
+
+        // Word boundary test (' 하도', '하도 ')
+        let text_chars: Vec<char> = "하도 천하도 하도다.".chars().collect();
+        // index 0..2 ("하도") -> word start AND word end
+        assert!(check_word_boundary(&text_chars, 0, 2, true, true));
+        // index 4..6 ("하도" inside "천하도") -> NOT word start, IS word end
+        assert!(!check_word_boundary(&text_chars, 4, 6, true, false));
+        assert!(check_word_boundary(&text_chars, 4, 6, false, true));
+        // index 7..9 ("하도" inside "하도다.") -> IS word start, NOT word end
+        assert!(check_word_boundary(&text_chars, 7, 9, true, false));
+        assert!(!check_word_boundary(&text_chars, 7, 9, false, true));
+    }
+
+    #[test]
+    fn test_native_builder_schema() {
+        let conn = Connection::open_in_memory().expect("open in-memory sqlite");
+        builder::init_db_schema(&conn).expect("init_db_schema");
+        let tbl_cnt: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('documents', 'source_files', 'segments', 'segment_edits')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(tbl_cnt, 4);
+
+        let sample_file = std::path::Path::new("../sample/2BA92A01.txt");
+        if sample_file.exists() {
+            let tmp_db = std::path::Path::new("../db/test_unit_build.corpdb");
+            let _ = std::fs::remove_file(tmp_db);
+            let normalizer = Normalizer::new(std::path::Path::new("../assets/data/pua_table.json"));
+            let mgr = Arc::new(Mutex::new(DbBuildManager::new()));
+            {
+                let mut m = mgr.lock().unwrap();
+                m.progress.is_running = true;
+                m.progress.status = "RUNNING".to_string();
+            }
+            builder::build_folder_into_db_native(sample_file, tmp_db, &normalizer, &mgr)
+                .expect("build_folder_into_db_native");
+            let m = mgr.lock().unwrap();
+            assert_eq!(m.progress.status, "COMPLETED");
+            assert!(m.progress.sentences_imported > 0, "Should import >0 sentences from 2BA92A01.txt");
+            assert!(m.progress.eojeols_imported > 0, "Should import >0 eojeols from 2BA92A01.txt");
+            drop(m);
+            let _ = std::fs::remove_file(tmp_db);
+        }
     }
 }
