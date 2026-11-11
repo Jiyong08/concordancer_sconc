@@ -88,9 +88,14 @@ concordancer_sconc/
 ├── engine/                  # Rust 고속 백엔드 코어 및 내장 DB 빌더
 │   ├── Cargo.toml           # Rust 패키지 명세 (sconc v0.1)
 │   └── src/
-│       ├── main.rs          # HTTP 서버, 스트리밍 검색, KWIC 문맥 확장, 에디터 점프, 독립 앱 런처
+│       ├── main.rs          # HTTP 서버 라우터, 웹 자산 서빙, 독립 앱 런처, 단위 테스트
+│       ├── models.rs        # AppState, MemoryProfile, API DTO 및 공통 유틸
+│       ├── normalizer.rs    # 한양 PUA ↔ 유니코드 첫가끝 정규화, [초/중/종] 자소 매처
+│       ├── search.rs        # 초고속 다층 검색, KWIC 문맥 확장, 3단계 검색단위, 스트리밍
+│       ├── handlers.rs      # 문서 조회/삭제, 세그먼트 편집, DB 빌더 제어 API
+│       ├── editor.rs        # 원문 4단계 라인 추적(Source Jump) 및 외부 에디터 연동
 │       ├── builder.rs       # 11종 말뭉치 포맷 자동 판별 및 인코딩 감지 네이티브 DB 빌더
-│       └── jamo_table.rs    # 대괄호 자소([초/중/종]) 파서 및 43개 원자 자모 매처
+│       └── jamo_table.rs    # 대괄호 자소([초/중/종]) 분해용 원자 자모 테이블
 ├── web/                     # 반응형 프런트엔드 UI (sconc.exe 내부에 자동 임베딩됨)
 │   ├── index.html           # 반응형 레이아웃 및 다중 탭 화면
 │   ├── styles.css           # UI 스타일시트 및 KWIC 하이라이트
