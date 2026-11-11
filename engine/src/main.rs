@@ -1573,28 +1573,6 @@ fn query_requires_eojeol_start(core_query: &str) -> bool {
     {
         return false;
     }
-    // Single bound grammatical morpheme (조사 J*, 어미 E*, 접미사 XS*, 지정사 VCP/VCN, 기호 S*)
-    if let Some(slash_idx) = q.find('/') {
-        let left = &q[..slash_idx];
-        let right = &q[slash_idx + 1..];
-        if !left.is_empty()
-            && !left.contains(' ')
-            && !left.contains('+')
-            && !left.contains('.')
-            && !left.contains('{')
-            && !right.contains('/')
-        {
-            let tag = right.trim();
-            if tag.starts_with('J')
-                || tag.starts_with('E')
-                || tag.starts_with("XS")
-                || tag.starts_with("VC")
-                || tag.starts_with('S')
-            {
-                return false;
-            }
-        }
-    }
     true
 }
 
@@ -1757,46 +1735,36 @@ fn match_analysis_layer(
         return None;
     }
 
-    // Precompute normalized eojeol structures: (word_clean, morph_compat_clean, full_ea_compat_clean, norm_morph)
+    // Precompute normalized eojeol structures: pure morphological/sense analysis per eojeol
     struct EojeolItem {
         raw_word: String,
-        word_clean: String,
         mo_clean: String,
-        ea_clean: String,
         norm_mo: String,
-        norm_ea: String,
     }
 
     let mut items: Vec<EojeolItem> = Vec::with_capacity(raw_eas.len());
     for ea in &raw_eas {
         let (w_raw, m_raw) = split_eojeol_word_and_analysis(ea);
         let w_disp = state.normalizer.compose_modern_hangul_for_display(w_raw);
-        let (w_clean_slice, _) = strip_leading_surface_quotes(&w_disp);
         let mo_compat = state.normalizer.normalize_morph_for_regex(m_raw);
         let mo_clean = strip_leading_morph_quotes(&mo_compat).to_string();
-        let ea_compat = state.normalizer.normalize_morph_for_regex(ea);
-        let (ea_clean_slice, _) = strip_leading_surface_quotes(&ea_compat);
         let norm_mo = state.normalizer.normalize_morph_str(&mo_clean);
-        let norm_ea = state.normalizer.normalize_morph_str(ea_clean_slice);
         items.push(EojeolItem {
-            raw_word: w_disp.clone(),
-            word_clean: w_clean_slice.to_string(),
+            raw_word: w_disp,
             mo_clean,
-            ea_clean: ea_clean_slice.to_string(),
             norm_mo,
-            norm_ea,
         });
     }
 
     let req_start = qctx.req_eojeol_start && qctx.search_unit != "text";
 
-    // Helper closure to test a single eojeol (used by "eojeol" and as first check in "sentence")
+    // Helper closure to test a single eojeol strictly within its own analysis (`mo_clean`)
     let check_single_eojeol = |item: &EojeolItem| -> Option<&'static str> {
         // 1) Regex match (takes priority when query has regex syntax or regex is enabled)
         if qctx.use_regex {
             if req_start {
                 if let Some(re_anc) = qctx.anchored_regex {
-                    if re_anc.is_match(&item.mo_clean) || re_anc.is_match(&item.ea_clean) {
+                    if re_anc.is_match(&item.mo_clean) {
                         return Some(layer_regex_label);
                     }
                 }
@@ -1815,14 +1783,6 @@ fn match_analysis_layer(
                         return Some(layer_jamo_label);
                     }
                 }
-                if req_start {
-                    let ea_units = state.normalizer.tokenize_text_units(&item.ea_clean);
-                    if let Some((sc, _)) = find_bracket_query_match(b_tokens, &ea_units) {
-                        if sc == 0 {
-                            return Some(layer_jamo_label);
-                        }
-                    }
-                }
             }
         }
         // 3) Plain text / normalized morph match
@@ -1831,9 +1791,7 @@ fn match_analysis_layer(
             if req_start {
                 if item.mo_clean.starts_with(qctx.core_query)
                     || item.mo_clean.replace(" + ", "+").starts_with(&cq_clean)
-                    || item.ea_clean.starts_with(qctx.core_query)
                     || item.norm_mo.starts_with(qctx.norm_morph_query)
-                    || item.norm_ea.starts_with(qctx.norm_morph_query)
                 {
                     return Some(layer_label);
                 }
@@ -1864,35 +1822,15 @@ fn match_analysis_layer(
     // 2. Multi-eojeol matching within the sentence ("sentence" or "text" mode)
     // Build pure morpheme sentence stream `mo_0 | mo_1 | ...` with eojeol index mapping
     for start_idx in 0..items.len() {
-        // Stream A: Pure morpheme tail starting at eojeol `start_idx`: `mo_{start_idx} | mo_{start_idx+1} | ...`
         let mut mo_tail = String::new();
         let mut eojeol_end_byte_offsets: Vec<(usize, usize)> = Vec::new();
         for j in start_idx..items.len() {
             if j > start_idx {
                 mo_tail.push_str(" | ");
             }
-            let b_start = mo_tail.len();
             mo_tail.push_str(&items[j].mo_clean);
             let b_end = mo_tail.len();
             eojeol_end_byte_offsets.push((j, b_end));
-            let _ = b_start;
-        }
-
-        // Stream B: Surface-to-morpheme cross-eojeol string: `word_{start_idx} mo_{start_idx+1} | ...`
-        let mut surf_morph_tail = String::new();
-        let mut sm_end_byte_offsets: Vec<(usize, usize)> = Vec::new();
-        if start_idx + 1 < items.len() {
-            surf_morph_tail.push_str(&items[start_idx].word_clean);
-            sm_end_byte_offsets.push((start_idx, surf_morph_tail.len()));
-            for j in (start_idx + 1)..items.len() {
-                if j == start_idx + 1 {
-                    surf_morph_tail.push(' ');
-                } else {
-                    surf_morph_tail.push_str(" | ");
-                }
-                surf_morph_tail.push_str(&items[j].mo_clean);
-                sm_end_byte_offsets.push((j, surf_morph_tail.len()));
-            }
         }
 
         // 2-1) Regex multi-eojeol match
@@ -1918,25 +1856,6 @@ fn match_analysis_layer(
                             &items[start_idx].raw_word,
                         );
                         return Some((sc, ec, layer_regex_label));
-                    }
-                }
-                if !surf_morph_tail.is_empty() {
-                    if let Some(m) = re.find(&surf_morph_tail) {
-                        if !req_start || m.start() == 0 {
-                            let end_ej = sm_end_byte_offsets
-                                .iter()
-                                .find(|&&(_, b_end)| m.end() <= b_end)
-                                .map(|&(ej, _)| ej)
-                                .unwrap_or(items.len() - 1);
-                            let (sc, ec) = find_eojeol_span_in_display(
-                                display_text,
-                                word_spans,
-                                start_idx,
-                                end_ej,
-                                &items[start_idx].raw_word,
-                            );
-                            return Some((sc, ec, layer_regex_label));
-                        }
                     }
                 }
             }
@@ -1965,40 +1884,13 @@ fn match_analysis_layer(
                         return Some((sc, ec, layer_jamo_label));
                     }
                 }
-                if !surf_morph_tail.is_empty() {
-                    let sm_units = state.normalizer.tokenize_text_units(&surf_morph_tail);
-                    if let Some((sc_u, ec_u)) = find_bracket_query_match(b_tokens, &sm_units) {
-                        if !req_start || sc_u == 0 {
-                            let matched_byte_len: usize = surf_morph_tail
-                                .chars()
-                                .take(ec_u)
-                                .map(|c| c.len_utf8())
-                                .sum();
-                            let end_ej = sm_end_byte_offsets
-                                .iter()
-                                .find(|&&(_, b_end)| matched_byte_len <= b_end)
-                                .map(|&(ej, _)| ej)
-                                .unwrap_or(items.len() - 1);
-                            let (sc, ec) = find_eojeol_span_in_display(
-                                display_text,
-                                word_spans,
-                                start_idx,
-                                end_ej,
-                                &items[start_idx].raw_word,
-                            );
-                            return Some((sc, ec, layer_jamo_label));
-                        }
-                    }
-                }
             }
         }
 
         // 2-3) Plain text multi-eojeol match
         if qctx.use_text && !qctx.use_regex && qctx.bracket_tokens.is_none() {
             if req_start {
-                if mo_tail.starts_with(qctx.core_query)
-                    || (!surf_morph_tail.is_empty() && surf_morph_tail.starts_with(qctx.core_query))
-                {
+                if mo_tail.starts_with(qctx.core_query) {
                     let (sc, ec) = find_eojeol_span_in_display(
                         display_text,
                         word_spans,
@@ -2008,9 +1900,7 @@ fn match_analysis_layer(
                     );
                     return Some((sc, ec, layer_label));
                 }
-            } else if mo_tail.contains(qctx.core_query)
-                || (!surf_morph_tail.is_empty() && surf_morph_tail.contains(qctx.core_query))
-            {
+            } else if mo_tail.contains(qctx.core_query) {
                 let (sc, ec) = find_eojeol_span_in_display(
                     display_text,
                     word_spans,
@@ -2023,7 +1913,7 @@ fn match_analysis_layer(
         }
 
         // In "text" mode (where req_start is false), start_idx == 0 already scanned the entire mo_tail unanchored
-        if !req_start && surf_morph_tail.is_empty() {
+        if !req_start {
             break;
         }
     }
@@ -4955,12 +4845,36 @@ fn main() {
     let server = match Server::http(&bind_addr) {
         Ok(s) => s,
         Err(_) => {
-            println!("  [안내] 포트 {}에서 이미 검색기 엔진이 실행 중입니다.", port);
-            if auto_open {
-                println!("  [안내] 독립 실행 창을 엽니다: {}", url);
-                open_browser_with_root(&url, &root_dir);
+            println!("  [안내] 포트 {}에서 실행 중인 이전 sconc 프로세스를 종료하고 새 엔진으로 교체합니다...", port);
+            #[cfg(target_os = "windows")]
+            {
+                let my_pid = std::process::id();
+                let _ = Command::new("taskkill")
+                    .args(["/F", "/FI", &format!("PID ne {}", my_pid), "/IM", "sconc.exe"])
+                    .output();
             }
-            return;
+            let mut bound_server = None;
+            for _ in 0..15 {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                if let Ok(s) = Server::http(&bind_addr) {
+                    bound_server = Some(s);
+                    break;
+                }
+            }
+            match bound_server {
+                Some(s) => {
+                    println!("  [완료] 새 검색기 엔진이 포트 {}에 바인딩되었습니다.", port);
+                    s
+                }
+                None => {
+                    println!("  [안내] 포트 {}에서 이미 검색기 엔진이 실행 중입니다.", port);
+                    if auto_open {
+                        println!("  [안내] 독립 실행 창을 엽니다: {}", url);
+                        open_browser_with_root(&url, &root_dir);
+                    }
+                    return;
+                }
+            }
         }
     };
 
@@ -5243,7 +5157,7 @@ mod tests {
             port: 8787,
         };
 
-        let query = "하[ㄴ/1/01].{1,10}/NNG";
+        let query = "하[ㄴ/1/01].{0,10}/NNG";
         assert!(has_regex_syntax(query));
         let expanded = expand_bracket_syntax_to_regex(query);
         let re_unanchored = Regex::new(&expanded).unwrap();
@@ -5273,37 +5187,37 @@ mod tests {
             anchored_regex: Some(&re_anchored),
         };
 
-        // 1. '자제하는[자제/NNG + 하/XSV + 는/ETM]' MUST NOT match in eojeol or sentence mode
-        let disp_false = "자제하는 모습을 보였다.";
-        let morph_false = "자제하는[자제/NNG + 하/XSV + 는/ETM] | 모습을[모습/NNG + 을/JKO] | 보였다.[보이/VV + 었/EP + 다/EF + ./SF]";
-        assert!(
-            evaluate_segment_match(
-                &state,
-                &make_qctx("eojeol"),
-                disp_false,
-                disp_false,
-                disp_false,
-                morph_false,
-                "",
-                ""
-            )
-            .is_none(),
-            "'자제하는' must NOT match in eojeol unit mode"
-        );
-        assert!(
-            evaluate_segment_match(
-                &state,
-                &make_qctx("sentence"),
-                disp_false,
-                disp_false,
-                disp_false,
-                morph_false,
-                "",
-                ""
-            )
-            .is_none(),
-            "'자제하는' must NOT match in sentence unit mode"
-        );
+        // 1. '자제하는[자제/NNG + 하/XSV + 는/ETM]' and '건설하는[건설/NNG + 하/XSV + 는/ETM]'
+        // MUST NOT match in eojeol, sentence, OR text mode!
+        for (disp_false, morph_false) in [
+            (
+                "자제하는 모습을 보였다.",
+                "자제하는[자제/NNG + 하/XSV + 는/ETM] | 모습을[모습/NNG + 을/JKO] | 보였다.[보이/VV + 었/EP + 다/EF + ./SF]",
+            ),
+            (
+                "신규 공장을 건설하는 업체들에 제출토록 했다.",
+                "신규[신규/NNG] | 공장을[공장/NNG + 을/JKO] | 건설하는[건설/NNG + 하/XSV + 는/ETM] | 업체들에[업체/NNG + 들/XSN + 에/JKB] | 제출토록[제출/NNG + 하/XSV + 도록/EC] | 했다.[하/VX + 았/EP + 다/EF + ./SF]",
+            ),
+        ] {
+            for mode_u in ["eojeol", "sentence", "text"] {
+                assert!(
+                    evaluate_segment_match(
+                        &state,
+                        &make_qctx(mode_u),
+                        disp_false,
+                        disp_false,
+                        disp_false,
+                        morph_false,
+                        "",
+                        ""
+                    )
+                    .is_none(),
+                    "'{}' must NOT match in {} unit mode",
+                    disp_false,
+                    mode_u
+                );
+            }
+        }
 
         // 2. '하늘이[하늘/NNG+이/JKS]' MUST match in eojeol mode (eojeol starts with '하')
         let disp_true_ej = "푸른 하늘이 열렸다.";
@@ -5323,11 +5237,11 @@ mod tests {
         let matched_word: String = disp_true_ej.chars().skip(sc).take(ec - sc).collect();
         assert_eq!(matched_word, "하늘이");
 
-        // 3. '하는[하/VV + 는/ETM] | 일을[일/NNG + 을/JKO]'
+        // 3. '하나[하나/NR] | 일을[일/NNG + 을/JKO]'
         // - Does NOT match in eojeol mode (since /NNG is in the next eojeol)
-        // - DOES match in sentence mode (eojeol starts with '하' and crosses eojeol boundary within sentence)
-        let disp_cross_ej = "그가 하는 일을 보았다.";
-        let morph_cross_ej = "그가[그/NP + 가/JKS] | 하는[하/VV + 는/ETM] | 일을[일/NNG + 을/JKO] | 보았다.[보/VV + 았/EP + 다/EF + ./SF]";
+        // - DOES match in sentence mode (eojeol starts with '하나' and crosses eojeol boundary within sentence)
+        let disp_cross_ej = "그가 하나 일을 보았다.";
+        let morph_cross_ej = "그가[그/NP + 가/JKS] | 하나[하나/NR] | 일을[일/NNG + 을/JKO] | 보았다.[보/VV + 았/EP + 다/EF + ./SF]";
         assert!(
             evaluate_segment_match(
                 &state,
@@ -5340,7 +5254,7 @@ mod tests {
                 ""
             )
             .is_none(),
-            "Cross-eojeol '하는 일을' must NOT match in strict eojeol mode"
+            "Cross-eojeol '하나 일을' must NOT match in strict eojeol mode"
         );
         let m_sent = evaluate_segment_match(
             &state,
@@ -5354,26 +5268,42 @@ mod tests {
         );
         assert!(
             m_sent.is_some(),
-            "Cross-eojeol '하는 일을' MUST match in sentence mode"
+            "Cross-eojeol '하나 일을' MUST match in sentence mode"
         );
         let (sc_s, ec_s, _) = m_sent.unwrap();
         let matched_sent_span: String = disp_cross_ej.chars().skip(sc_s).take(ec_s - sc_s).collect();
-        assert_eq!(matched_sent_span, "하는 일을");
+        assert_eq!(matched_sent_span, "하나 일을");
 
-        // 4. In text mode (unbounded), unanchored match across eojeol ('자제하는 모습을' -> '하는 모습/NNG') is allowed
+        // 4. In text mode (unbounded), unanchored match starting mid-eojeol ('대한하나님의[대한/NNP + 하나님/NNG + 의/JKG]') is allowed
+        let disp_mid = "대한하나님의 은혜를 기렸다.";
+        let morph_mid = "대한하나님의[대한/NNP + 하나님/NNG + 의/JKG] | 은혜를[은혜/NNG + 를/JKO] | 기렸다.[기리/VV + 었/EP + 다/EF + ./SF]";
+        assert!(
+            evaluate_segment_match(
+                &state,
+                &make_qctx("eojeol"),
+                disp_mid,
+                disp_mid,
+                disp_mid,
+                morph_mid,
+                "",
+                ""
+            )
+            .is_none(),
+            "Mid-eojeol '대한하나님의' must NOT match in eojeol mode"
+        );
         let m_text = evaluate_segment_match(
             &state,
             &make_qctx("text"),
-            disp_false,
-            disp_false,
-            disp_false,
-            morph_false,
+            disp_mid,
+            disp_mid,
+            disp_mid,
+            morph_mid,
             "",
             "",
         );
         assert!(
             m_text.is_some(),
-            "In text mode (unbounded), unanchored cross-eojeol match is allowed"
+            "In text mode (unbounded), mid-eojeol match is allowed"
         );
     }
 }
