@@ -310,6 +310,33 @@ impl Normalizer {
                 out.push(ch);
             }
         }
+        out.replace(" + ", "+")
+    }
+
+    fn normalize_morph_for_regex(&self, text: &str) -> String {
+        let composed = self.compose_modern_hangul_for_display(text);
+        const CHO_COMPAT: [char; 19] = [
+            'ㄱ', 'ㄲ', 'ㄴ', 'ㄷ', 'ㄸ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅃ', 'ㅅ', 'ㅆ', 'ㅇ', 'ㅈ', 'ㅉ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ',
+        ];
+        const JUNG_COMPAT: [char; 21] = [
+            'ㅏ', 'ㅐ', 'ㅑ', 'ㅒ', 'ㅓ', 'ㅔ', 'ㅕ', 'ㅖ', 'ㅗ', 'ㅘ', 'ㅙ', 'ㅚ', 'ㅛ', 'ㅜ', 'ㅝ', 'ㅞ', 'ㅟ', 'ㅠ', 'ㅡ', 'ㅢ', 'ㅣ',
+        ];
+        const JONG_COMPAT: [char; 27] = [
+            'ㄱ', 'ㄲ', 'ㄳ', 'ㄴ', 'ㄵ', 'ㄶ', 'ㄷ', 'ㄹ', 'ㄺ', 'ㄻ', 'ㄼ', 'ㄽ', 'ㄾ', 'ㄿ', 'ㅀ', 'ㅁ', 'ㅂ', 'ㅄ', 'ㅅ', 'ㅆ', 'ㅇ', 'ㅈ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ',
+        ];
+        let mut out = String::with_capacity(composed.len());
+        for ch in composed.chars() {
+            let cp = ch as u32;
+            if (0x1100..=0x1112).contains(&cp) {
+                out.push(CHO_COMPAT[(cp - 0x1100) as usize]);
+            } else if (0x1161..=0x1175).contains(&cp) {
+                out.push(JUNG_COMPAT[(cp - 0x1161) as usize]);
+            } else if (0x11A8..=0x11C2).contains(&cp) {
+                out.push(JONG_COMPAT[(cp - 0x11A8) as usize]);
+            } else {
+                out.push(ch);
+            }
+        }
         out
     }
 
@@ -1470,6 +1497,874 @@ fn check_word_boundary(
     true
 }
 
+/// Checks if the query contains regular expression metacharacters outside `[초/중/종]` Jamo brackets.
+fn has_regex_syntax(query: &str) -> bool {
+    if query.is_empty() {
+        return false;
+    }
+    // Remove [초/중/종] jamo brackets first
+    let chars: Vec<char> = query.chars().collect();
+    let mut stripped = String::with_capacity(query.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '[' {
+            let mut end_br = i + 1;
+            while end_br < chars.len() && chars[end_br] != ']' {
+                end_br += 1;
+            }
+            if end_br < chars.len() && chars[end_br] == ']' {
+                let inner: String = chars[i + 1..end_br].iter().collect();
+                if inner.contains('/') {
+                    i = end_br + 1;
+                    continue;
+                }
+            }
+        }
+        stripped.push(chars[i]);
+        i += 1;
+    }
+    stripped.contains(".{")
+        || stripped.contains(".*")
+        || stripped.contains(".+")
+        || stripped.contains(".?")
+        || stripped.contains("\\d")
+        || stripped.contains("\\s")
+        || stripped.contains("\\S")
+        || stripped.contains("\\w")
+        || stripped.contains("\\b")
+        || stripped.contains('^')
+        || stripped.contains('$')
+        || stripped.contains('|')
+        || (stripped.contains('{') && stripped.contains('}'))
+        || (stripped.contains('[') && stripped.contains(']'))
+        || (stripped.contains('(') && stripped.contains(')'))
+}
+
+/// Determines whether a query requires matching at the start of an eojeol (`어절 시작부분 매칭`)
+/// when in `eojeol` or `sentence` search unit mode.
+fn query_requires_eojeol_start(core_query: &str) -> bool {
+    let q = core_query.trim();
+    if q.is_empty() {
+        return false;
+    }
+    if q.starts_with('^') {
+        return true;
+    }
+    // Explicit leading wildcards or tag/sense delimiters allow mid-eojeol matching
+    if q.starts_with(".*")
+        || q.starts_with(".+")
+        || q.starts_with(".?")
+        || q.starts_with('*')
+        || q.starts_with('?')
+        || q.starts_with("\\S*")
+        || q.starts_with("\\w*")
+        || q.starts_with('/')
+        || q.starts_with('_')
+        || q.starts_with('+')
+        || q.starts_with('-')
+        || q.starts_with(')')
+        || q.starts_with('(')
+    {
+        return false;
+    }
+    // Pure POS / syntax category tag (e.g., NNG, VV, ETM, NP_SBJ)
+    if q.chars()
+        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_' || c == '/' || c == '+')
+    {
+        return false;
+    }
+    // Single bound grammatical morpheme (조사 J*, 어미 E*, 접미사 XS*, 지정사 VCP/VCN, 기호 S*)
+    if let Some(slash_idx) = q.find('/') {
+        let left = &q[..slash_idx];
+        let right = &q[slash_idx + 1..];
+        if !left.is_empty()
+            && !left.contains(' ')
+            && !left.contains('+')
+            && !left.contains('.')
+            && !left.contains('{')
+            && !right.contains('/')
+        {
+            let tag = right.trim();
+            if tag.starts_with('J')
+                || tag.starts_with('E')
+                || tag.starts_with("XS")
+                || tag.starts_with("VC")
+                || tag.starts_with('S')
+            {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn is_leading_quote_or_bracket(c: char) -> bool {
+    matches!(
+        c,
+        '"' | '\'' | '“' | '”' | '‘' | '’' | '(' | '<' | '{' | '「' | '『' | '《' | '〈' | '【' | '〔'
+    )
+}
+
+fn strip_leading_surface_quotes(s: &str) -> (&str, usize) {
+    let mut byte_idx = 0;
+    let mut skipped_chars = 0;
+    for (b_i, ch) in s.char_indices() {
+        if is_leading_quote_or_bracket(ch) {
+            byte_idx = b_i + ch.len_utf8();
+            skipped_chars += 1;
+        } else {
+            break;
+        }
+    }
+    (&s[byte_idx..], skipped_chars)
+}
+
+fn strip_leading_morph_quotes(s: &str) -> &str {
+    let mut cur = s.trim_start();
+    loop {
+        if let Some(plus_idx) = cur.find('+') {
+            let first_m = cur[..plus_idx].trim();
+            if first_m.ends_with("/SS") || first_m.ends_with("/SP") || first_m.ends_with("/SO") {
+                cur = cur[plus_idx + 1..].trim_start();
+                continue;
+            }
+        }
+        break;
+    }
+    cur
+}
+
+fn split_eojeol_word_and_analysis(ea: &str) -> (&str, &str) {
+    if let Some(open_idx) = ea.find('[') {
+        if ea.ends_with(']') && open_idx + 1 < ea.len() {
+            return (&ea[..open_idx], &ea[open_idx + 1..ea.len() - 1]);
+        }
+    }
+    (ea, ea)
+}
+
+fn compute_display_word_spans(display_text: &str) -> Vec<(usize, usize, &str)> {
+    let mut spans = Vec::new();
+    let mut cur_char = 0usize;
+    let mut in_word = false;
+    let mut word_start_byte = 0usize;
+    let mut word_start_char = 0usize;
+
+    for (b_idx, ch) in display_text.char_indices() {
+        if ch.is_whitespace() {
+            if in_word {
+                spans.push((
+                    word_start_char,
+                    cur_char,
+                    &display_text[word_start_byte..b_idx],
+                ));
+                in_word = false;
+            }
+        } else if !in_word {
+            in_word = true;
+            word_start_byte = b_idx;
+            word_start_char = cur_char;
+        }
+        cur_char += 1;
+    }
+    if in_word {
+        spans.push((
+            word_start_char,
+            cur_char,
+            &display_text[word_start_byte..],
+        ));
+    }
+    spans
+}
+
+fn find_eojeol_span_in_display(
+    display_text: &str,
+    word_spans: &[(usize, usize, &str)],
+    start_eojeol_idx: usize,
+    end_eojeol_idx: usize,
+    first_ea_word: &str,
+) -> (usize, usize) {
+    if !word_spans.is_empty() {
+        let s_idx = start_eojeol_idx.min(word_spans.len() - 1);
+        let e_idx = end_eojeol_idx.max(s_idx).min(word_spans.len() - 1);
+        let (_, _, w_at_s) = word_spans[s_idx];
+        if first_ea_word.is_empty()
+            || w_at_s == first_ea_word
+            || w_at_s.contains(first_ea_word)
+            || first_ea_word.contains(w_at_s)
+        {
+            return (word_spans[s_idx].0, word_spans[e_idx].1);
+        }
+        // Search nearby word_spans if whitespace splitting shifted indices
+        for (idx, &(sc, _, w_str)) in word_spans.iter().enumerate() {
+            if !first_ea_word.is_empty()
+                && (w_str == first_ea_word
+                    || w_str.contains(first_ea_word)
+                    || first_ea_word.contains(w_str))
+            {
+                let span_len = end_eojeol_idx.saturating_sub(start_eojeol_idx);
+                let target_e = (idx + span_len).min(word_spans.len() - 1);
+                return (sc, word_spans[target_e].1);
+            }
+        }
+        return (word_spans[s_idx].0, word_spans[e_idx].1);
+    }
+    if !first_ea_word.is_empty() {
+        if let Some(byte_pos) = display_text.find(first_ea_word) {
+            let sc = display_text[..byte_pos].chars().count();
+            let ec = sc + first_ea_word.chars().count();
+            return (sc, ec);
+        }
+    }
+    (0, display_text.chars().count().min(6).max(1))
+}
+
+struct SearchQueryContext<'a> {
+    core_query: &'a str,
+    search_unit: &'a str, // "eojeol" | "sentence" | "text"
+    req_eojeol_start: bool,
+    has_leading_space: bool,
+    has_trailing_space: bool,
+    use_surface: bool,
+    use_morph: bool,
+    use_sense: bool,
+    use_syntax: bool,
+    use_text: bool,
+    use_jamo: bool,
+    use_regex: bool,
+    norm_query_chars: &'a [char],
+    norm_morph_query: &'a str,
+    bracket_tokens: Option<&'a [BracketQueryToken]>,
+    compiled_regex: Option<&'a Regex>,
+    anchored_regex: Option<&'a Regex>,
+}
+
+fn match_analysis_layer(
+    state: &AppState,
+    qctx: &SearchQueryContext,
+    display_text: &str,
+    word_spans: &[(usize, usize, &str)],
+    flat_str: &str,
+    layer_label: &'static str,
+    layer_jamo_label: &'static str,
+    layer_regex_label: &'static str,
+) -> Option<(usize, usize, &'static str)> {
+    if flat_str.is_empty() {
+        return None;
+    }
+    let raw_eas: Vec<&str> = flat_str.split(" | ").collect();
+    if raw_eas.is_empty() {
+        return None;
+    }
+
+    // Precompute normalized eojeol structures: (word_clean, morph_compat_clean, full_ea_compat_clean, norm_morph)
+    struct EojeolItem {
+        raw_word: String,
+        word_clean: String,
+        mo_clean: String,
+        ea_clean: String,
+        norm_mo: String,
+        norm_ea: String,
+    }
+
+    let mut items: Vec<EojeolItem> = Vec::with_capacity(raw_eas.len());
+    for ea in &raw_eas {
+        let (w_raw, m_raw) = split_eojeol_word_and_analysis(ea);
+        let w_disp = state.normalizer.compose_modern_hangul_for_display(w_raw);
+        let (w_clean_slice, _) = strip_leading_surface_quotes(&w_disp);
+        let mo_compat = state.normalizer.normalize_morph_for_regex(m_raw);
+        let mo_clean = strip_leading_morph_quotes(&mo_compat).to_string();
+        let ea_compat = state.normalizer.normalize_morph_for_regex(ea);
+        let (ea_clean_slice, _) = strip_leading_surface_quotes(&ea_compat);
+        let norm_mo = state.normalizer.normalize_morph_str(&mo_clean);
+        let norm_ea = state.normalizer.normalize_morph_str(ea_clean_slice);
+        items.push(EojeolItem {
+            raw_word: w_disp.clone(),
+            word_clean: w_clean_slice.to_string(),
+            mo_clean,
+            ea_clean: ea_clean_slice.to_string(),
+            norm_mo,
+            norm_ea,
+        });
+    }
+
+    let req_start = qctx.req_eojeol_start && qctx.search_unit != "text";
+
+    // Helper closure to test a single eojeol (used by "eojeol" and as first check in "sentence")
+    let check_single_eojeol = |item: &EojeolItem| -> Option<&'static str> {
+        // 1) Regex match (takes priority when query has regex syntax or regex is enabled)
+        if qctx.use_regex {
+            if req_start {
+                if let Some(re_anc) = qctx.anchored_regex {
+                    if re_anc.is_match(&item.mo_clean) || re_anc.is_match(&item.ea_clean) {
+                        return Some(layer_regex_label);
+                    }
+                }
+            } else if let Some(re) = qctx.compiled_regex {
+                if re.is_match(&item.mo_clean) {
+                    return Some(layer_regex_label);
+                }
+            }
+        }
+        // 2) Jamo bracket match (when not a regex-quantifier query)
+        if (qctx.use_jamo || qctx.bracket_tokens.is_some()) && !qctx.use_regex {
+            if let Some(b_tokens) = qctx.bracket_tokens {
+                let mo_units = state.normalizer.tokenize_text_units(&item.mo_clean);
+                if let Some((sc, _)) = find_bracket_query_match(b_tokens, &mo_units) {
+                    if !req_start || sc == 0 {
+                        return Some(layer_jamo_label);
+                    }
+                }
+                if req_start {
+                    let ea_units = state.normalizer.tokenize_text_units(&item.ea_clean);
+                    if let Some((sc, _)) = find_bracket_query_match(b_tokens, &ea_units) {
+                        if sc == 0 {
+                            return Some(layer_jamo_label);
+                        }
+                    }
+                }
+            }
+        }
+        // 3) Plain text / normalized morph match
+        if qctx.use_text && !qctx.use_regex && qctx.bracket_tokens.is_none() {
+            let cq_clean = qctx.core_query.replace(" + ", "+");
+            if req_start {
+                if item.mo_clean.starts_with(qctx.core_query)
+                    || item.mo_clean.replace(" + ", "+").starts_with(&cq_clean)
+                    || item.ea_clean.starts_with(qctx.core_query)
+                    || item.norm_mo.starts_with(qctx.norm_morph_query)
+                    || item.norm_ea.starts_with(qctx.norm_morph_query)
+                {
+                    return Some(layer_label);
+                }
+            } else if item.mo_clean.contains(qctx.core_query)
+                || item.mo_clean.replace(" + ", "+").contains(&cq_clean)
+                || item.norm_mo.contains(qctx.norm_morph_query)
+            {
+                return Some(layer_label);
+            }
+        }
+        None
+    };
+
+    // 1. Check single-eojeol matches first
+    for (idx, item) in items.iter().enumerate() {
+        if let Some(lbl) = check_single_eojeol(item) {
+            let (sc, ec) =
+                find_eojeol_span_in_display(display_text, word_spans, idx, idx, &item.raw_word);
+            return Some((sc, ec, lbl));
+        }
+    }
+
+    // If search_unit is strictly "eojeol", do not cross eojeol boundaries!
+    if qctx.search_unit == "eojeol" || items.len() < 2 {
+        return None;
+    }
+
+    // 2. Multi-eojeol matching within the sentence ("sentence" or "text" mode)
+    // Build pure morpheme sentence stream `mo_0 | mo_1 | ...` with eojeol index mapping
+    for start_idx in 0..items.len() {
+        // Stream A: Pure morpheme tail starting at eojeol `start_idx`: `mo_{start_idx} | mo_{start_idx+1} | ...`
+        let mut mo_tail = String::new();
+        let mut eojeol_end_byte_offsets: Vec<(usize, usize)> = Vec::new();
+        for j in start_idx..items.len() {
+            if j > start_idx {
+                mo_tail.push_str(" | ");
+            }
+            let b_start = mo_tail.len();
+            mo_tail.push_str(&items[j].mo_clean);
+            let b_end = mo_tail.len();
+            eojeol_end_byte_offsets.push((j, b_end));
+            let _ = b_start;
+        }
+
+        // Stream B: Surface-to-morpheme cross-eojeol string: `word_{start_idx} mo_{start_idx+1} | ...`
+        let mut surf_morph_tail = String::new();
+        let mut sm_end_byte_offsets: Vec<(usize, usize)> = Vec::new();
+        if start_idx + 1 < items.len() {
+            surf_morph_tail.push_str(&items[start_idx].word_clean);
+            sm_end_byte_offsets.push((start_idx, surf_morph_tail.len()));
+            for j in (start_idx + 1)..items.len() {
+                if j == start_idx + 1 {
+                    surf_morph_tail.push(' ');
+                } else {
+                    surf_morph_tail.push_str(" | ");
+                }
+                surf_morph_tail.push_str(&items[j].mo_clean);
+                sm_end_byte_offsets.push((j, surf_morph_tail.len()));
+            }
+        }
+
+        // 2-1) Regex multi-eojeol match
+        if qctx.use_regex {
+            let re_to_use = if req_start {
+                qctx.anchored_regex
+            } else {
+                qctx.compiled_regex
+            };
+            if let Some(re) = re_to_use {
+                if let Some(m) = re.find(&mo_tail) {
+                    if !req_start || m.start() == 0 {
+                        let end_ej = eojeol_end_byte_offsets
+                            .iter()
+                            .find(|&&(_, b_end)| m.end() <= b_end)
+                            .map(|&(ej, _)| ej)
+                            .unwrap_or(items.len() - 1);
+                        let (sc, ec) = find_eojeol_span_in_display(
+                            display_text,
+                            word_spans,
+                            start_idx,
+                            end_ej,
+                            &items[start_idx].raw_word,
+                        );
+                        return Some((sc, ec, layer_regex_label));
+                    }
+                }
+                if !surf_morph_tail.is_empty() {
+                    if let Some(m) = re.find(&surf_morph_tail) {
+                        if !req_start || m.start() == 0 {
+                            let end_ej = sm_end_byte_offsets
+                                .iter()
+                                .find(|&&(_, b_end)| m.end() <= b_end)
+                                .map(|&(ej, _)| ej)
+                                .unwrap_or(items.len() - 1);
+                            let (sc, ec) = find_eojeol_span_in_display(
+                                display_text,
+                                word_spans,
+                                start_idx,
+                                end_ej,
+                                &items[start_idx].raw_word,
+                            );
+                            return Some((sc, ec, layer_regex_label));
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2-2) Jamo bracket multi-eojeol match
+        if (qctx.use_jamo || qctx.bracket_tokens.is_some()) && !qctx.use_regex {
+            if let Some(b_tokens) = qctx.bracket_tokens {
+                let tail_units = state.normalizer.tokenize_text_units(&mo_tail);
+                if let Some((sc_u, ec_u)) = find_bracket_query_match(b_tokens, &tail_units) {
+                    if !req_start || sc_u == 0 {
+                        let matched_byte_len: usize =
+                            mo_tail.chars().take(ec_u).map(|c| c.len_utf8()).sum();
+                        let end_ej = eojeol_end_byte_offsets
+                            .iter()
+                            .find(|&&(_, b_end)| matched_byte_len <= b_end)
+                            .map(|&(ej, _)| ej)
+                            .unwrap_or(items.len() - 1);
+                        let (sc, ec) = find_eojeol_span_in_display(
+                            display_text,
+                            word_spans,
+                            start_idx,
+                            end_ej,
+                            &items[start_idx].raw_word,
+                        );
+                        return Some((sc, ec, layer_jamo_label));
+                    }
+                }
+                if !surf_morph_tail.is_empty() {
+                    let sm_units = state.normalizer.tokenize_text_units(&surf_morph_tail);
+                    if let Some((sc_u, ec_u)) = find_bracket_query_match(b_tokens, &sm_units) {
+                        if !req_start || sc_u == 0 {
+                            let matched_byte_len: usize = surf_morph_tail
+                                .chars()
+                                .take(ec_u)
+                                .map(|c| c.len_utf8())
+                                .sum();
+                            let end_ej = sm_end_byte_offsets
+                                .iter()
+                                .find(|&&(_, b_end)| matched_byte_len <= b_end)
+                                .map(|&(ej, _)| ej)
+                                .unwrap_or(items.len() - 1);
+                            let (sc, ec) = find_eojeol_span_in_display(
+                                display_text,
+                                word_spans,
+                                start_idx,
+                                end_ej,
+                                &items[start_idx].raw_word,
+                            );
+                            return Some((sc, ec, layer_jamo_label));
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2-3) Plain text multi-eojeol match
+        if qctx.use_text && !qctx.use_regex && qctx.bracket_tokens.is_none() {
+            if req_start {
+                if mo_tail.starts_with(qctx.core_query)
+                    || (!surf_morph_tail.is_empty() && surf_morph_tail.starts_with(qctx.core_query))
+                {
+                    let (sc, ec) = find_eojeol_span_in_display(
+                        display_text,
+                        word_spans,
+                        start_idx,
+                        (start_idx + 1).min(items.len() - 1),
+                        &items[start_idx].raw_word,
+                    );
+                    return Some((sc, ec, layer_label));
+                }
+            } else if mo_tail.contains(qctx.core_query)
+                || (!surf_morph_tail.is_empty() && surf_morph_tail.contains(qctx.core_query))
+            {
+                let (sc, ec) = find_eojeol_span_in_display(
+                    display_text,
+                    word_spans,
+                    start_idx,
+                    (start_idx + 1).min(items.len() - 1),
+                    &items[start_idx].raw_word,
+                );
+                return Some((sc, ec, layer_label));
+            }
+        }
+
+        // In "text" mode (where req_start is false), start_idx == 0 already scanned the entire mo_tail unanchored
+        if !req_start && surf_morph_tail.is_empty() {
+            break;
+        }
+    }
+
+    None
+}
+
+fn evaluate_segment_match(
+    state: &AppState,
+    qctx: &SearchQueryContext,
+    display_text: &str,
+    text_raw: &str,
+    text_nfd_norm: &str,
+    morph_flat: &str,
+    sense_flat: &str,
+    syntax_tree: &str,
+) -> Option<(usize, usize, &'static str)> {
+    let word_spans = compute_display_word_spans(display_text);
+    let req_start = qctx.req_eojeol_start && qctx.search_unit != "text";
+
+    // 1. Surface layer matching
+    if qctx.use_surface {
+        if qctx.search_unit == "eojeol" {
+            for &(w_sc, w_ec, w_str) in &word_spans {
+                let (w_clean, skipped_c) = strip_leading_surface_quotes(w_str);
+                if w_clean.is_empty() {
+                    continue;
+                }
+                // 1-1) Regex in eojeol mode
+                if qctx.use_regex {
+                    if req_start {
+                        if let Some(re_anc) = qctx.anchored_regex {
+                            if let Some(m) = re_anc.find(w_clean) {
+                                let m_chars = w_clean[..m.end()].chars().count();
+                                return Some((
+                                    w_sc + skipped_c,
+                                    (w_sc + skipped_c + m_chars).max(w_ec),
+                                    "원문/정규식",
+                                ));
+                            }
+                        }
+                    } else if let Some(re) = qctx.compiled_regex {
+                        if let Some(m) = re.find(w_clean) {
+                            let sc = w_clean[..m.start()].chars().count();
+                            let ec = sc + w_clean[m.start()..m.end()].chars().count();
+                            return Some((w_sc + skipped_c + sc, w_sc + skipped_c + ec, "원문/정규식"));
+                        }
+                    }
+                }
+                // 1-2) Jamo bracket in eojeol mode
+                if (qctx.use_jamo || qctx.bracket_tokens.is_some()) && !qctx.use_regex {
+                    if let Some(b_tokens) = qctx.bracket_tokens {
+                        let units = state.normalizer.tokenize_text_units(w_clean);
+                        if let Some((sc, ec)) = find_bracket_query_match(b_tokens, &units) {
+                            if !req_start || sc == 0 {
+                                return Some((
+                                    w_sc + skipped_c + sc,
+                                    w_sc + skipped_c + ec,
+                                    "원문/자소",
+                                ));
+                            }
+                        }
+                    }
+                }
+                // 1-3) Text / NFD in eojeol mode
+                if qctx.use_text && !qctx.use_regex && qctx.bracket_tokens.is_none() {
+                    let (norm_chars, char_map) = state.normalizer.to_nfd_norm_with_map(w_clean);
+                    let candidates = find_all_char_subslices(&norm_chars, qctx.norm_query_chars);
+                    for (n_start, n_end) in candidates {
+                        if !qctx.use_jamo && n_end < norm_chars.len() && is_jongseong_jamo(norm_chars[n_end]) {
+                            continue;
+                        }
+                        let orig_start = char_map.get(n_start).copied().unwrap_or(0);
+                        let orig_end = char_map
+                            .get(n_end.saturating_sub(1))
+                            .map(|&idx| idx + 1)
+                            .unwrap_or(orig_start + 1);
+                        if req_start && orig_start != 0 {
+                            continue;
+                        }
+                        if qctx.has_trailing_space && orig_end < w_clean.chars().count() {
+                            continue;
+                        }
+                        return Some((
+                            w_sc + skipped_c + orig_start,
+                            w_sc + skipped_c + orig_end,
+                            "원문/음절",
+                        ));
+                    }
+                }
+            }
+        } else {
+            // Sentence or Text unit mode on Surface
+            let display_chars: Vec<char> = display_text.chars().collect();
+            let is_valid_start = |char_idx: usize| -> bool {
+                if !req_start || char_idx == 0 {
+                    return true;
+                }
+                let mut k = char_idx;
+                while k > 0 && is_leading_quote_or_bracket(display_chars[k - 1]) {
+                    k -= 1;
+                }
+                k == 0 || display_chars[k - 1].is_whitespace()
+            };
+
+            // 1-1) Regex on display_text
+            if qctx.use_regex {
+                if let Some(re) = qctx.compiled_regex {
+                    for m in re.find_iter(display_text) {
+                        let start_c = display_text[..m.start()].chars().count();
+                        if !is_valid_start(start_c) {
+                            continue;
+                        }
+                        let end_c = start_c + display_text[m.start()..m.end()].chars().count();
+                        return Some((start_c, end_c, "원문/정규식"));
+                    }
+                    if !req_start {
+                        if let Some(_m) = re.find(text_nfd_norm) {
+                            return Some((0, display_chars.len().min(8), "원문/정규식(NFD)"));
+                        }
+                    }
+                }
+            }
+
+            // 1-2) Jamo bracket on display_text
+            if (qctx.use_jamo || qctx.bracket_tokens.is_some()) && !qctx.use_regex {
+                if let Some(b_tokens) = qctx.bracket_tokens {
+                    let units = state.normalizer.tokenize_text_units(display_text);
+                    for start_u in 0..units.len() {
+                        if !is_valid_start(units[start_u].start_char) {
+                            continue;
+                        }
+                        if let Some(consumed) = match_tokens_at(b_tokens, &units[start_u..]) {
+                            if consumed > 0 {
+                                let sc = units[start_u].start_char;
+                                let ec = units[start_u + consumed - 1].end_char;
+                                return Some((sc, ec, "원문/자소"));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 1-3) Text / NFD on display_text
+            if qctx.use_text && !qctx.use_regex && qctx.bracket_tokens.is_none() {
+                let (norm_chars, char_map) = state.normalizer.to_nfd_norm_with_map(display_text);
+                let candidates = find_all_char_subslices(&norm_chars, qctx.norm_query_chars);
+                for (n_start, n_end) in candidates {
+                    if !qctx.use_jamo && n_end < norm_chars.len() && is_jongseong_jamo(norm_chars[n_end]) {
+                        continue;
+                    }
+                    let orig_start = char_map.get(n_start).copied().unwrap_or(0);
+                    let orig_end = char_map
+                        .get(n_end.saturating_sub(1))
+                        .map(|&idx| idx + 1)
+                        .unwrap_or(orig_start + 1);
+                    if !is_valid_start(orig_start) {
+                        continue;
+                    }
+                    if !check_word_boundary(
+                        &display_chars,
+                        orig_start,
+                        orig_end,
+                        qctx.has_leading_space,
+                        qctx.has_trailing_space,
+                    ) {
+                        continue;
+                    }
+                    return Some((orig_start, orig_end, "원문/음절"));
+                }
+                if text_raw.contains(qctx.core_query) {
+                    if let Some(byte_pos) = display_text.find(qctx.core_query) {
+                        let sc = display_text[..byte_pos].chars().count();
+                        let ec = sc + qctx.core_query.chars().count();
+                        if is_valid_start(sc)
+                            && check_word_boundary(
+                                &display_chars,
+                                sc,
+                                ec,
+                                qctx.has_leading_space,
+                                qctx.has_trailing_space,
+                            )
+                        {
+                            return Some((sc, ec, "원문(PUA)"));
+                        }
+                    } else if !req_start && !qctx.has_leading_space && !qctx.has_trailing_space {
+                        return Some((0, display_chars.len().min(6), "원문(PUA)"));
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Morpheme layer matching
+    if qctx.use_morph {
+        if let Some(res) = match_analysis_layer(
+            state,
+            qctx,
+            display_text,
+            &word_spans,
+            morph_flat,
+            "형태분석",
+            "형태소/자소",
+            "형태소/정규식",
+        ) {
+            return Some(res);
+        }
+    }
+
+    // 3. Sense layer matching
+    if qctx.use_sense {
+        if let Some(res) = match_analysis_layer(
+            state,
+            qctx,
+            display_text,
+            &word_spans,
+            sense_flat,
+            "형태의미",
+            "형태의미/자소",
+            "형태의미/정규식",
+        ) {
+            return Some(res);
+        }
+    }
+
+    // 4. Syntax tree layer matching
+    if qctx.use_syntax && !syntax_tree.is_empty() {
+        let first_word_len = word_spans.first().map(|w| w.1 - w.0).unwrap_or(6);
+        let syn_compat = state.normalizer.normalize_morph_for_regex(syntax_tree);
+        if qctx.use_regex {
+            if let Some(re) = qctx.compiled_regex {
+                if re.is_match(&syn_compat) || re.is_match(syntax_tree) {
+                    return Some((0, first_word_len, "구문/정규식"));
+                }
+            }
+        }
+        if (qctx.use_jamo || qctx.bracket_tokens.is_some()) && !qctx.use_regex {
+            if let Some(b_tokens) = qctx.bracket_tokens {
+                let syn_units = state.normalizer.tokenize_text_units(&syn_compat);
+                if find_bracket_query_match(b_tokens, &syn_units).is_some() {
+                    return Some((0, first_word_len, "구문/자소"));
+                }
+            }
+        }
+        if qctx.use_text && !qctx.use_regex && qctx.bracket_tokens.is_none() {
+            let norm_syn = state.normalizer.normalize_morph_str(syntax_tree);
+            if syntax_tree.contains(qctx.core_query)
+                || syn_compat.contains(qctx.core_query)
+                || norm_syn.contains(qctx.norm_morph_query)
+            {
+                return Some((0, first_word_len, "구문분석"));
+            }
+        }
+    }
+
+    None
+}
+
+fn evaluate_cross_sentence_match(
+    state: &AppState,
+    conn: &Connection,
+    qctx: &SearchQueryContext,
+    doc_id: &str,
+    seq_no: i64,
+    display_text: &str,
+    text_raw: &str,
+    text_nfd_norm: &str,
+    morph_flat: &str,
+    sense_flat: &str,
+    syntax_tree: &str,
+) -> Option<(String, usize, usize, &'static str)> {
+    let mut stmt_next = conn
+        .prepare_cached(
+            "SELECT text_raw, text_unicode, text_nfd_norm, COALESCE(morph_flat, ''), COALESCE(sense_flat, ''), COALESCE(syntax_tree, '')
+             FROM segments WHERE doc_id = ?1 AND seq_no = ?2",
+        )
+        .ok()?;
+    let (next_raw, next_unicode, next_nfd, next_morph, next_sense, next_syntax): (
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+    ) = stmt_next
+        .query_row(params![doc_id, seq_no + 1], |r| {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3).unwrap_or_default(),
+                r.get(4).unwrap_or_default(),
+                r.get(5).unwrap_or_default(),
+            ))
+        })
+        .ok()?;
+
+    let next_display = state
+        .normalizer
+        .compose_modern_hangul_for_display(&next_unicode);
+    let cur_char_len = display_text.chars().count();
+    if cur_char_len == 0 || next_display.is_empty() {
+        return None;
+    }
+
+    let comb_display = format!("{} {}", display_text, next_display);
+    let comb_raw = format!("{} {}", text_raw, next_raw);
+    let comb_nfd = format!("{} {}", text_nfd_norm, next_nfd);
+    let comb_morph = if !morph_flat.is_empty() && !next_morph.is_empty() {
+        format!("{} | {}", morph_flat, next_morph)
+    } else {
+        String::new()
+    };
+    let comb_sense = if !sense_flat.is_empty() && !next_sense.is_empty() {
+        format!("{} | {}", sense_flat, next_sense)
+    } else {
+        String::new()
+    };
+    let comb_syntax = if !syntax_tree.is_empty() && !next_syntax.is_empty() {
+        format!("{} {}", syntax_tree, next_syntax)
+    } else {
+        String::new()
+    };
+
+    if let Some((sc, ec, lbl)) = evaluate_segment_match(
+        state,
+        qctx,
+        &comb_display,
+        &comb_raw,
+        &comb_nfd,
+        &comb_morph,
+        &comb_sense,
+        &comb_syntax,
+    ) {
+        if sc < cur_char_len && ec > cur_char_len {
+            return Some((comb_display, sc, ec, lbl));
+        }
+    }
+    None
+}
+
 fn handle_search(
     state: &AppState,
     params: &HashMap<String, String>,
@@ -1486,11 +2381,21 @@ fn handle_search(
         raw_query
     };
 
+    let search_unit = match params
+        .get("search_unit")
+        .map(|s| s.trim())
+        .unwrap_or("eojeol")
+    {
+        "sentence" => "sentence",
+        "text" => "text",
+        _ => "eojeol",
+    };
+
     let targets_param = params.get("targets").map(|s| s.as_str()).unwrap_or("");
     let methods_param = params.get("methods").map(|s| s.as_str()).unwrap_or("");
-    let mode = params.get("mode").map(|s| s.as_str()).unwrap_or("all");
+    let mode = params.get("mode").map(|s| s.as_str()).unwrap_or("surface");
 
-    // Target layers: surface, morph, sense, syntax
+    // Target layers: single layer by default (surface, morph, sense, syntax)
     let mut use_surface = false;
     let mut use_morph = false;
     let mut use_sense = false;
@@ -1514,13 +2419,6 @@ fn handle_search(
         }
     } else {
         match mode {
-            "all" => {
-                use_surface = true;
-                use_morph = true;
-                use_sense = true;
-                use_syntax = true;
-            }
-            "surface" | "jamo" | "regex" => use_surface = true,
             "morph" => use_morph = true,
             "sense" => use_sense = true,
             "syntax" => use_syntax = true,
@@ -1553,6 +2451,10 @@ fn handle_search(
                 }
             }
         }
+    }
+
+    if has_regex_syntax(core_query) {
+        use_regex = true;
     }
 
     if !use_surface && !use_morph && !use_sense && !use_syntax {
@@ -1604,8 +2506,12 @@ fn handle_search(
 
     let bracket_tokens = state.normalizer.parse_bracket_query(core_query);
 
-    let is_all_targets = use_surface && use_morph && use_sense && use_syntax;
-    if core_query.is_empty() && selected_doc_ids.is_empty() && layer_filter == "ALL" && cat_filter == "ALL" && is_all_targets {
+    if core_query.is_empty()
+        && selected_doc_ids.is_empty()
+        && layer_filter == "ALL"
+        && cat_filter == "ALL"
+        && use_surface
+    {
         return json_response(
             &SearchResponse {
                 query: raw_query.to_string(),
@@ -1629,34 +2535,42 @@ fn handle_search(
     };
     state.memory_profile.apply_pragmas(&conn);
 
-    let compiled_regex = if (use_regex || mode == "regex") && !core_query.is_empty() {
+    let (compiled_regex, anchored_regex) = if (use_regex || mode == "regex") && !core_query.is_empty() {
         let expanded_regex_str = expand_bracket_syntax_to_regex(core_query);
-        match Regex::new(&expanded_regex_str) {
-            Ok(r) => Some(r),
-            Err(e) => {
-                match Regex::new(core_query) {
-                    Ok(r2) => Some(r2),
-                    Err(_) => {
-                        return json_response(
-                            &serde_json::json!({ "error": format!("정규표현식 오류: {}", e) }),
-                            400,
-                        );
-                    }
+        let base_pat = match Regex::new(&expanded_regex_str) {
+            Ok(_) => expanded_regex_str,
+            Err(e) => match Regex::new(core_query) {
+                Ok(_) => core_query.to_string(),
+                Err(_) => {
+                    return json_response(
+                        &serde_json::json!({ "error": format!("정규표현식 오류: {}", e) }),
+                        400,
+                    );
                 }
-            }
-        }
+            },
+        };
+        let r_unanchored = Regex::new(&base_pat).ok();
+        let anchored_pat = if base_pat.starts_with('^') {
+            base_pat.clone()
+        } else {
+            format!("^(?:{})", base_pat)
+        };
+        let r_anchored = Regex::new(&anchored_pat).ok();
+        (r_unanchored, r_anchored)
     } else {
-        None
+        (None, None)
     };
 
-    // 문서 메타데이터 인메모리 캐시 조회 (JOIN documents 제거를 통한 100배 고속화)
+    // 문서 메타데이터 인메모리 캐시 조회
     struct DocMeta {
         title: String,
         category: String,
         layers: String,
     }
     let mut doc_meta_map: HashMap<String, DocMeta> = HashMap::new();
-    if let Ok(mut stmt_docs) = conn.prepare("SELECT doc_id, title, corpus_category, annotation_layers FROM documents") {
+    if let Ok(mut stmt_docs) =
+        conn.prepare("SELECT doc_id, title, corpus_category, annotation_layers FROM documents")
+    {
         if let Ok(doc_iter) = stmt_docs.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,
@@ -1666,21 +2580,61 @@ fn handle_search(
             ))
         }) {
             for d in doc_iter.flatten() {
-                doc_meta_map.insert(d.0, DocMeta { title: d.1, category: d.2, layers: d.3 });
+                doc_meta_map.insert(
+                    d.0,
+                    DocMeta {
+                        title: d.1,
+                        category: d.2,
+                        layers: d.3,
+                    },
+                );
             }
         }
     }
 
     let mut effective_doc_ids = selected_doc_ids.clone();
     if cat_filter != "ALL" && !cat_filter.is_empty() {
-        let cat_matched_ids: Vec<String> = doc_meta_map.iter()
+        let cat_matched_ids: Vec<String> = doc_meta_map
+            .iter()
             .filter(|(_, meta)| meta.category.contains(cat_filter))
             .map(|(id, _)| id.clone())
             .collect();
         if effective_doc_ids.is_empty() {
-            effective_doc_ids = cat_matched_ids;
+            effective_doc_ids = if cat_matched_ids.is_empty() {
+                vec!["__NO_MATCHING_DOC__".to_string()]
+            } else {
+                cat_matched_ids
+            };
         } else {
             effective_doc_ids.retain(|id| cat_matched_ids.contains(id));
+            if effective_doc_ids.is_empty() {
+                effective_doc_ids.push("__NO_MATCHING_DOC__".to_string());
+            }
+        }
+    }
+
+    // 검색 대상 층위가 '형태소/품사', '형태의미', '구문표지'인 경우 해당 분석 말뭉치 문서들로만 엄격 제한
+    if !use_surface {
+        let layer_matched_ids: Vec<String> = doc_meta_map
+            .iter()
+            .filter(|(_, meta)| {
+                (use_morph && (meta.category.contains("형태") || meta.layers.contains("형태")))
+                    || (use_sense && (meta.category.contains("의미") || meta.layers.contains("의미")))
+                    || (use_syntax && (meta.category.contains("구문") || meta.layers.contains("구문")))
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        if effective_doc_ids.is_empty() {
+            effective_doc_ids = if layer_matched_ids.is_empty() {
+                vec!["__NO_MATCHING_DOC__".to_string()]
+            } else {
+                layer_matched_ids
+            };
+        } else {
+            effective_doc_ids.retain(|id| layer_matched_ids.contains(id));
+            if effective_doc_ids.is_empty() {
+                effective_doc_ids.push("__NO_MATCHING_DOC__".to_string());
+            }
         }
     }
 
@@ -1723,7 +2677,8 @@ fn handle_search(
     if layer_filter == "TRIPLE" {
         sql.push_str(" AND COALESCE(s.morph_flat, '') != '' AND COALESCE(s.sense_flat, '') != '' AND COALESCE(s.syntax_tree, '') != ''");
     } else if layer_filter == "OLD_HANGUL" {
-        let old_ids: Vec<String> = doc_meta_map.iter()
+        let old_ids: Vec<String> = doc_meta_map
+            .iter()
             .filter(|(_, meta)| meta.category.contains("옛한글"))
             .map(|(id, _)| id.clone())
             .collect();
@@ -1743,43 +2698,32 @@ fn handle_search(
     }
 
     let choseong_only = is_choseong_only_query(&norm_query_chars);
-    if !core_query.is_empty() && !use_regex && mode != "regex" && !choseong_only && bracket_tokens.is_none() {
-        let mut text_likes = Vec::new();
-        if use_surface {
-            text_likes.push("(s.text_nfd_norm LIKE ? OR s.text_unicode LIKE ? OR s.text_raw LIKE ?)");
-            let pat_nfd = format!("%{}%", norm_query_nfd);
-            let pat_raw = format!("%{}%", core_query);
-            sql_params.push(pat_nfd);
-            sql_params.push(pat_raw.clone());
-            sql_params.push(pat_raw);
-        }
-        if use_morph {
-            text_likes.push("s.morph_flat LIKE ?");
-            sql_params.push(format!("%{}%", core_query));
-        }
-        if use_sense {
-            text_likes.push("s.sense_flat LIKE ?");
-            sql_params.push(format!("%{}%", core_query));
-        }
-        if use_syntax {
-            text_likes.push("s.syntax_tree LIKE ?");
-            sql_params.push(format!("%{}%", core_query));
-        }
-        if !text_likes.is_empty() {
-            sql.push_str(&format!(" AND ({})", text_likes.join(" OR ")));
-        }
+    if !core_query.is_empty()
+        && !use_regex
+        && mode != "regex"
+        && !choseong_only
+        && bracket_tokens.is_none()
+        && use_surface
+        && !use_morph
+        && !use_sense
+        && !use_syntax
+    {
+        let like_tok = if search_unit == "text" && core_query.contains(' ') {
+            core_query.split_whitespace().next().unwrap_or(core_query)
+        } else {
+            core_query
+        };
+        let like_nfd = state.normalizer.to_nfd_norm(like_tok);
+        sql.push_str(" AND (s.text_nfd_norm LIKE ? OR s.text_unicode LIKE ? OR s.text_raw LIKE ?)");
+        sql_params.push(format!("%{}%", like_nfd));
+        sql_params.push(format!("%{}%", like_tok));
+        sql_params.push(format!("%{}%", like_tok));
     }
 
     sql.push_str(" ORDER BY s.doc_id ASC, s.seq_no ASC");
 
-    // 대용량 코퍼스(수백만 문장) 브라우저 타임아웃 방지: limit 건수 대비 적정 상한 설정
-    let sql_limit = if limit == usize::MAX {
-        None
-    } else {
-        Some(limit.saturating_mul(4).max(2000))
-    };
-    if let Some(l_val) = sql_limit {
-        sql.push_str(&format!(" LIMIT {}", l_val));
+    if core_query.is_empty() && limit != usize::MAX {
+        sql.push_str(&format!(" LIMIT {}", limit));
     }
 
     let mut stmt = match conn.prepare(&sql) {
@@ -1794,6 +2738,26 @@ fn handle_search(
     let mut total_matches = 0usize;
     let mut cancelled = false;
     let mut scanned_rows = 0usize;
+
+    let qctx = SearchQueryContext {
+        core_query,
+        search_unit,
+        req_eojeol_start: query_requires_eojeol_start(core_query),
+        has_leading_space,
+        has_trailing_space,
+        use_surface,
+        use_morph,
+        use_sense,
+        use_syntax,
+        use_text,
+        use_jamo,
+        use_regex,
+        norm_query_chars: &norm_query_chars,
+        norm_morph_query: &norm_morph_query,
+        bracket_tokens: bracket_tokens.as_deref(),
+        compiled_regex: compiled_regex.as_ref(),
+        anchored_regex: anchored_regex.as_ref(),
+    };
 
     let rows = stmt.query_map(param_refs.as_slice(), |row| {
         Ok((
@@ -1879,6 +2843,15 @@ fn handle_search(
                         l_trunc,
                         r_trunc,
                     );
+                    let browse_layer = if !use_surface && use_morph {
+                        "형태분석 열람"
+                    } else if !use_surface && use_sense {
+                        "형태의미 열람"
+                    } else if !use_surface && use_syntax {
+                        "구문분석 열람"
+                    } else {
+                        "문서 열람"
+                    };
                     hits.push(SearchHit {
                         segment_id,
                         doc_id,
@@ -1902,267 +2875,46 @@ fn handle_search(
                         morph_flat,
                         sense_flat,
                         syntax_tree,
-                        match_layer: "문서 열람".to_string(),
+                        match_layer: browse_layer.to_string(),
                     });
                 }
                 continue;
             }
 
+            let mut matched_span = evaluate_segment_match(
+                state,
+                &qctx,
+                &display_text,
+                &text_raw,
+                &text_nfd_norm,
+                &morph_flat,
+                &sense_flat,
+                &syntax_tree,
+            )
+            .map(|(sc, ec, lbl)| (display_text.clone(), sc, ec, lbl));
 
-
-
-
-            let mut matched_span: Option<(usize, usize, &str)> = None;
-
-            // 1. Surface matching
-            if use_surface && matched_span.is_none() {
-                // 1-1) Jamo bracket matching on display_text
-                if (use_jamo || bracket_tokens.is_some()) && bracket_tokens.is_some() {
-                    let b_tokens = bracket_tokens.as_ref().unwrap();
-                    let units = state.normalizer.tokenize_text_units(&display_text);
-                    if let Some((sc, ec)) = find_bracket_query_match(b_tokens, &units) {
-                        matched_span = Some((sc, ec, "원문/자소"));
-                    }
-                }
-
-                // 1-2) Regex matching on display_text
-                if use_regex && compiled_regex.is_some() && matched_span.is_none() {
-                    let re = compiled_regex.as_ref().unwrap();
-                    if let Some(m) = re.find(&display_text) {
-                        let start_c = display_text[..m.start()].chars().count();
-                        let end_c = start_c + display_text[m.start()..m.end()].chars().count();
-                        matched_span = Some((start_c, end_c, "원문/정규식"));
-                    } else if let Some(_m) = re.find(&text_nfd_norm) {
-                        matched_span =
-                            Some((0, display_text.chars().count().min(8), "원문/정규식(NFD)"));
-                    }
-                }
-
-                // 1-3) Plain text syllable/PUA matching
-                if use_text && matched_span.is_none() {
-                    let display_chars: Vec<char> = display_text.chars().collect();
-                    let (norm_chars, char_map) =
-                        state.normalizer.to_nfd_norm_with_map(&display_text);
-                    let candidates = find_all_char_subslices(&norm_chars, &norm_query_chars);
-
-                    for (n_start, n_end) in candidates {
-                        if !use_jamo {
-                            if n_end < norm_chars.len() && is_jongseong_jamo(norm_chars[n_end]) {
-                                continue;
-                            }
-                        }
-
-                        let orig_start = char_map.get(n_start).copied().unwrap_or(0);
-                        let orig_end = char_map
-                            .get(n_end.saturating_sub(1))
-                            .map(|&idx| idx + 1)
-                            .unwrap_or(orig_start + 1);
-
-                        if !check_word_boundary(
-                            &display_chars,
-                            orig_start,
-                            orig_end,
-                            has_leading_space,
-                            has_trailing_space,
-                        ) {
-                            continue;
-                        }
-
-                        matched_span = Some((orig_start, orig_end, "원문/음절"));
-                        break;
-                    }
-
-                    if matched_span.is_none() && text_raw.contains(core_query) {
-                        if let Some(byte_pos) = display_text.find(core_query) {
-                            let sc = display_text[..byte_pos].chars().count();
-                            let ec = sc + core_query.chars().count();
-                            if check_word_boundary(
-                                &display_chars,
-                                sc,
-                                ec,
-                                has_leading_space,
-                                has_trailing_space,
-                            ) {
-                                matched_span = Some((sc, ec, "원문(PUA)"));
-                            }
-                        } else if !has_leading_space && !has_trailing_space {
-                            matched_span =
-                                Some((0, display_text.chars().count().min(6), "원문(PUA)"));
-                        }
-                    }
-                }
+            if matched_span.is_none() && search_unit == "text" {
+                matched_span = evaluate_cross_sentence_match(
+                    state,
+                    &conn,
+                    &qctx,
+                    &doc_id,
+                    seq_no,
+                    &display_text,
+                    &text_raw,
+                    &text_nfd_norm,
+                    &morph_flat,
+                    &sense_flat,
+                    &syntax_tree,
+                );
             }
 
-            // 2. Morpheme layer matching
-            if use_morph && matched_span.is_none() && !morph_flat.is_empty() {
-                let eojeol_analyses: Vec<&str> = morph_flat.split(" | ").collect();
-                let words: Vec<&str> = display_text.split_whitespace().collect();
-
-                // 2-1) Jamo bracket matching on morph_flat
-                if (use_jamo || bracket_tokens.is_some()) && bracket_tokens.is_some() {
-                    let b_tokens = bracket_tokens.as_ref().unwrap();
-                    for (idx, ea) in eojeol_analyses.iter().enumerate() {
-                        let ea_units = state.normalizer.tokenize_text_units(ea);
-                        if find_bracket_query_match(b_tokens, &ea_units).is_some() {
-                            if let Some(&w) = words.get(idx) {
-                                if let Some(byte_pos) = display_text.find(w) {
-                                    let sc = display_text[..byte_pos].chars().count();
-                                    let ec = sc + w.chars().count();
-                                    matched_span = Some((sc, ec, "형태소/자소"));
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // 2-2) Regex matching on morph_flat
-                if use_regex && compiled_regex.is_some() && matched_span.is_none() {
-                    let re = compiled_regex.as_ref().unwrap();
-                    for (idx, ea) in eojeol_analyses.iter().enumerate() {
-                        if re.is_match(ea) {
-                            if let Some(&w) = words.get(idx) {
-                                if let Some(byte_pos) = display_text.find(w) {
-                                    let sc = display_text[..byte_pos].chars().count();
-                                    let ec = sc + w.chars().count();
-                                    matched_span = Some((sc, ec, "형태소/정규식"));
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // 2-3) Text matching on morph_flat
-                if use_text && matched_span.is_none() {
-                    let norm_m = state.normalizer.normalize_morph_str(&morph_flat);
-                    if norm_m.contains(&norm_morph_query) || morph_flat.contains(core_query) {
-                        for (idx, ea) in eojeol_analyses.iter().enumerate() {
-                            if state
-                                .normalizer
-                                .normalize_morph_str(ea)
-                                .contains(&norm_morph_query)
-                                || ea.contains(core_query)
-                            {
-                                if let Some(&w) = words.get(idx) {
-                                    if let Some(byte_pos) = display_text.find(w) {
-                                        let sc = display_text[..byte_pos].chars().count();
-                                        let ec = sc + w.chars().count();
-                                        matched_span = Some((sc, ec, "형태분석"));
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 3. Sense layer matching
-            if use_sense && matched_span.is_none() && !sense_flat.is_empty() {
-                let eojeol_analyses: Vec<&str> = sense_flat.split(" | ").collect();
-                let words: Vec<&str> = display_text.split_whitespace().collect();
-
-                // 3-1) Jamo bracket matching on sense_flat
-                if (use_jamo || bracket_tokens.is_some()) && bracket_tokens.is_some() {
-                    let b_tokens = bracket_tokens.as_ref().unwrap();
-                    for (idx, ea) in eojeol_analyses.iter().enumerate() {
-                        let ea_units = state.normalizer.tokenize_text_units(ea);
-                        if find_bracket_query_match(b_tokens, &ea_units).is_some() {
-                            if let Some(&w) = words.get(idx) {
-                                if let Some(byte_pos) = display_text.find(w) {
-                                    let sc = display_text[..byte_pos].chars().count();
-                                    let ec = sc + w.chars().count();
-                                    matched_span = Some((sc, ec, "형태의미/자소"));
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // 3-2) Regex matching on sense_flat
-                if use_regex && compiled_regex.is_some() && matched_span.is_none() {
-                    let re = compiled_regex.as_ref().unwrap();
-                    for (idx, ea) in eojeol_analyses.iter().enumerate() {
-                        if re.is_match(ea) {
-                            if let Some(&w) = words.get(idx) {
-                                if let Some(byte_pos) = display_text.find(w) {
-                                    let sc = display_text[..byte_pos].chars().count();
-                                    let ec = sc + w.chars().count();
-                                    matched_span = Some((sc, ec, "형태의미/정규식"));
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // 3-3) Text matching on sense_flat
-                if use_text && matched_span.is_none() {
-                    let norm_s = state.normalizer.normalize_morph_str(&sense_flat);
-                    if norm_s.contains(&norm_morph_query) || sense_flat.contains(core_query) {
-                        for (idx, ea) in eojeol_analyses.iter().enumerate() {
-                            if state
-                                .normalizer
-                                .normalize_morph_str(ea)
-                                .contains(&norm_morph_query)
-                                || ea.contains(core_query)
-                            {
-                                if let Some(&w) = words.get(idx) {
-                                    if let Some(byte_pos) = display_text.find(w) {
-                                        let sc = display_text[..byte_pos].chars().count();
-                                        let ec = sc + w.chars().count();
-                                        matched_span = Some((sc, ec, "형태의미"));
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 4. Syntax tree layer matching
-            if use_syntax && matched_span.is_none() && !syntax_tree.is_empty() {
-                let first_word_len = display_text
-                    .split_whitespace()
-                    .next()
-                    .map(|w| w.chars().count())
-                    .unwrap_or(6);
-
-                // 4-1) Jamo bracket matching on syntax_tree
-                if (use_jamo || bracket_tokens.is_some()) && bracket_tokens.is_some() {
-                    let b_tokens = bracket_tokens.as_ref().unwrap();
-                    let syn_units = state.normalizer.tokenize_text_units(&syntax_tree);
-                    if find_bracket_query_match(b_tokens, &syn_units).is_some() {
-                        matched_span = Some((0, first_word_len, "구문/자소"));
-                    }
-                }
-
-                // 4-2) Regex matching on syntax_tree
-                if use_regex && compiled_regex.is_some() && matched_span.is_none() {
-                    let re = compiled_regex.as_ref().unwrap();
-                    if re.is_match(&syntax_tree) {
-                        matched_span = Some((0, first_word_len, "구문/정규식"));
-                    }
-                }
-
-                // 4-3) Text matching on syntax_tree
-                if use_text && matched_span.is_none() {
-                    let norm_syn = state.normalizer.normalize_morph_str(&syntax_tree);
-                    if syntax_tree.contains(core_query) || norm_syn.contains(&norm_morph_query) {
-                        matched_span = Some((0, first_word_len, "구문분석"));
-                    }
-                }
-            }
-
-            if let Some((start_c, end_c, layer_name)) = matched_span {
+            if let Some((kwic_base_text, start_c, end_c, layer_name)) = matched_span {
                 total_matches += 1;
                 if hits.len() < limit {
                     let (raw_left, node, raw_right, w_cnt, rw_cnt, l_trunc, r_trunc) =
                         extract_kwic_by_word_count(
-                            &display_text,
+                            &kwic_base_text,
                             start_c,
                             end_c,
                             context_words,
@@ -2281,9 +3033,19 @@ fn handle_search_stream(
             raw_query
         };
 
+        let search_unit = match params_worker
+            .get("search_unit")
+            .map(|s| s.trim())
+            .unwrap_or("eojeol")
+        {
+            "sentence" => "sentence",
+            "text" => "text",
+            _ => "eojeol",
+        };
+
         let targets_param = params_worker.get("targets").map(|s| s.as_str()).unwrap_or("");
         let methods_param = params_worker.get("methods").map(|s| s.as_str()).unwrap_or("");
-        let mode = params_worker.get("mode").map(|s| s.as_str()).unwrap_or("all");
+        let mode = params_worker.get("mode").map(|s| s.as_str()).unwrap_or("surface");
 
         let mut use_surface = false;
         let mut use_morph = false;
@@ -2308,13 +3070,6 @@ fn handle_search_stream(
             }
         } else {
             match mode {
-                "all" => {
-                    use_surface = true;
-                    use_morph = true;
-                    use_sense = true;
-                    use_syntax = true;
-                }
-                "surface" | "jamo" | "regex" => use_surface = true,
                 "morph" => use_morph = true,
                 "sense" => use_sense = true,
                 "syntax" => use_syntax = true,
@@ -2346,6 +3101,10 @@ fn handle_search_stream(
                     }
                 }
             }
+        }
+
+        if has_regex_syntax(core_query) {
+            use_regex = true;
         }
 
         if !use_surface && !use_morph && !use_sense && !use_syntax {
@@ -2386,11 +3145,11 @@ fn handle_search_stream(
             "type": "start",
             "query": raw_query,
             "mode": mode,
+            "search_unit": search_unit,
             "normalized_query_display": norm_query_display,
             "limit": limit,
         });
-        if tx.send(format!("{}
-", start_msg).into_bytes()).is_err() {
+        if tx.send(format!("{}\n", start_msg).into_bytes()).is_err() {
             return;
         }
 
@@ -2398,30 +3157,35 @@ fn handle_search_stream(
             Ok(c) => c,
             Err(e) => {
                 let err_msg = serde_json::json!({ "type": "error", "error": e.to_string() });
-                let _ = tx.send(format!("{}
-", err_msg).into_bytes());
+                let _ = tx.send(format!("{}\n", err_msg).into_bytes());
                 return;
             }
         };
         state_worker.memory_profile.apply_pragmas(&conn);
 
-        let compiled_regex = if use_regex {
-            let pattern = if bracket_tokens.is_some() {
-                expand_bracket_syntax_to_regex(core_query)
-            } else {
-                core_query.to_string()
+        let (compiled_regex, anchored_regex) = if (use_regex || mode == "regex") && !core_query.is_empty() {
+            let expanded_regex_str = expand_bracket_syntax_to_regex(core_query);
+            let base_pat = match Regex::new(&expanded_regex_str) {
+                Ok(_) => expanded_regex_str,
+                Err(e) => match Regex::new(core_query) {
+                    Ok(_) => core_query.to_string(),
+                    Err(_) => {
+                        let err_msg = serde_json::json!({ "type": "error", "error": format!("정규표현식 오류: {}", e) });
+                        let _ = tx.send(format!("{}\n", err_msg).into_bytes());
+                        return;
+                    }
+                },
             };
-            match Regex::new(&pattern) {
-                Ok(r) => Some(r),
-                Err(e) => {
-                    let err_msg = serde_json::json!({ "type": "error", "error": format!("정규표현식 오류: {}", e) });
-                    let _ = tx.send(format!("{}
-", err_msg).into_bytes());
-                    return;
-                }
-            }
+            let r_unanchored = Regex::new(&base_pat).ok();
+            let anchored_pat = if base_pat.starts_with('^') {
+                base_pat.clone()
+            } else {
+                format!("^(?:{})", base_pat)
+            };
+            let r_anchored = Regex::new(&anchored_pat).ok();
+            (r_unanchored, r_anchored)
         } else {
-            None
+            (None, None)
         };
 
         struct DocMeta {
@@ -2452,9 +3216,41 @@ fn handle_search_stream(
                 .map(|(id, _)| id.clone())
                 .collect();
             if effective_doc_ids.is_empty() {
-                effective_doc_ids = cat_matched_ids;
+                effective_doc_ids = if cat_matched_ids.is_empty() {
+                    vec!["__NO_MATCHING_DOC__".to_string()]
+                } else {
+                    cat_matched_ids
+                };
             } else {
                 effective_doc_ids.retain(|id| cat_matched_ids.contains(id));
+                if effective_doc_ids.is_empty() {
+                    effective_doc_ids.push("__NO_MATCHING_DOC__".to_string());
+                }
+            }
+        }
+
+        // 검색 대상 층위가 '형태소/품사', '형태의미', '구문표지'인 경우 해당 분석 말뭉치 문서들로만 엄격 제한
+        if !use_surface {
+            let layer_matched_ids: Vec<String> = doc_meta_map
+                .iter()
+                .filter(|(_, meta)| {
+                    (use_morph && (meta.category.contains("형태") || meta.layers.contains("형태")))
+                        || (use_sense && (meta.category.contains("의미") || meta.layers.contains("의미")))
+                        || (use_syntax && (meta.category.contains("구문") || meta.layers.contains("구문")))
+                })
+                .map(|(id, _)| id.clone())
+                .collect();
+            if effective_doc_ids.is_empty() {
+                effective_doc_ids = if layer_matched_ids.is_empty() {
+                    vec!["__NO_MATCHING_DOC__".to_string()]
+                } else {
+                    layer_matched_ids
+                };
+            } else {
+                effective_doc_ids.retain(|id| layer_matched_ids.contains(id));
+                if effective_doc_ids.is_empty() {
+                    effective_doc_ids.push("__NO_MATCHING_DOC__".to_string());
+                }
             }
         }
 
@@ -2515,31 +3311,26 @@ fn handle_search_stream(
         }
 
         let choseong_only = is_choseong_only_query(&norm_query_chars);
-        if !core_query.is_empty() && !use_regex && mode != "regex" && !choseong_only && bracket_tokens.is_none() {
-            let mut text_likes = Vec::new();
-            if use_surface {
-                text_likes.push("(s.text_nfd_norm LIKE ? OR s.text_unicode LIKE ? OR s.text_raw LIKE ?)");
-                let pat_nfd = format!("%{}%", norm_query_nfd);
-                let pat_raw = format!("%{}%", core_query);
-                sql_params.push(pat_nfd);
-                sql_params.push(pat_raw.clone());
-                sql_params.push(pat_raw);
-            }
-            if use_morph {
-                text_likes.push("s.morph_flat LIKE ?");
-                sql_params.push(format!("%{}%", core_query));
-            }
-            if use_sense {
-                text_likes.push("s.sense_flat LIKE ?");
-                sql_params.push(format!("%{}%", core_query));
-            }
-            if use_syntax {
-                text_likes.push("s.syntax_tree LIKE ?");
-                sql_params.push(format!("%{}%", core_query));
-            }
-            if !text_likes.is_empty() {
-                sql.push_str(&format!(" AND ({})", text_likes.join(" OR ")));
-            }
+        if !core_query.is_empty()
+            && !use_regex
+            && mode != "regex"
+            && !choseong_only
+            && bracket_tokens.is_none()
+            && use_surface
+            && !use_morph
+            && !use_sense
+            && !use_syntax
+        {
+            let like_tok = if search_unit == "text" && core_query.contains(' ') {
+                core_query.split_whitespace().next().unwrap_or(core_query)
+            } else {
+                core_query
+            };
+            let like_nfd = state_worker.normalizer.to_nfd_norm(like_tok);
+            sql.push_str(" AND (s.text_nfd_norm LIKE ? OR s.text_unicode LIKE ? OR s.text_raw LIKE ?)");
+            sql_params.push(format!("%{}%", like_nfd));
+            sql_params.push(format!("%{}%", like_tok));
+            sql_params.push(format!("%{}%", like_tok));
         }
 
         sql.push_str(" ORDER BY s.doc_id ASC, s.seq_no ASC");
@@ -2548,8 +3339,7 @@ fn handle_search_stream(
             Ok(s) => s,
             Err(e) => {
                 let err_msg = serde_json::json!({ "type": "error", "error": e.to_string() });
-                let _ = tx.send(format!("{}
-", err_msg).into_bytes());
+                let _ = tx.send(format!("{}\n", err_msg).into_bytes());
                 return;
             }
         };
@@ -2561,6 +3351,26 @@ fn handle_search_stream(
         let mut total_matches = 0usize;
         let mut cancelled = false;
         let mut scanned_rows = 0usize;
+
+        let qctx = SearchQueryContext {
+            core_query,
+            search_unit,
+            req_eojeol_start: query_requires_eojeol_start(core_query),
+            has_leading_space,
+            has_trailing_space,
+            use_surface,
+            use_morph,
+            use_sense,
+            use_syntax,
+            use_text,
+            use_jamo,
+            use_regex,
+            norm_query_chars: &norm_query_chars,
+            norm_morph_query: &norm_morph_query,
+            bracket_tokens: bracket_tokens.as_deref(),
+            compiled_regex: compiled_regex.as_ref(),
+            anchored_regex: anchored_regex.as_ref(),
+        };
 
         let rows = stmt.query_map(param_refs.as_slice(), |row| {
             Ok((
@@ -2647,6 +3457,15 @@ fn handle_search_stream(
                         l_trunc,
                         r_trunc,
                     );
+                    let browse_layer = if !use_surface && use_morph {
+                        "형태분석 열람"
+                    } else if !use_surface && use_sense {
+                        "형태의미 열람"
+                    } else if !use_surface && use_syntax {
+                        "구문분석 열람"
+                    } else {
+                        "문서 열람"
+                    };
                     let hit = SearchHit {
                         segment_id,
                         doc_id,
@@ -2670,7 +3489,7 @@ fn handle_search_stream(
                         morph_flat,
                         sense_flat,
                         syntax_tree,
-                        match_layer: "문서 열람".to_string(),
+                        match_layer: browse_layer.to_string(),
                     };
 
                     let hit_msg = serde_json::json!({
@@ -2678,8 +3497,7 @@ fn handle_search_stream(
                         "hit": hit,
                         "matched_count": total_matches,
                     });
-                    if tx.send(format!("{}
-", hit_msg).into_bytes()).is_err() {
+                    if tx.send(format!("{}\n", hit_msg).into_bytes()).is_err() {
                         return; // client closed stream
                     }
 
@@ -2689,230 +3507,42 @@ fn handle_search_stream(
                     continue;
                 }
 
-                // Matching logic
-                let mut matched_span: Option<(usize, usize, &str)> = None;
+                let mut matched_span = evaluate_segment_match(
+                    &state_worker,
+                    &qctx,
+                    &display_text,
+                    &text_raw,
+                    &text_nfd_norm,
+                    &morph_flat,
+                    &sense_flat,
+                    &syntax_tree,
+                )
+                .map(|(sc, ec, lbl)| (display_text.clone(), sc, ec, lbl));
 
-                // 1. Surface matching
-                if use_surface && matched_span.is_none() {
-                    if (use_jamo || bracket_tokens.is_some()) && bracket_tokens.is_some() {
-                        let b_tokens = bracket_tokens.as_ref().unwrap();
-                        let units = state_worker.normalizer.tokenize_text_units(&display_text);
-                        if let Some((sc, ec)) = find_bracket_query_match(b_tokens, &units) {
-                            matched_span = Some((sc, ec, "원문/자소"));
-                        }
-                    }
-
-                    if use_regex && compiled_regex.is_some() && matched_span.is_none() {
-                        let re = compiled_regex.as_ref().unwrap();
-                        if let Some(m) = re.find(&display_text) {
-                            let start_c = display_text[..m.start()].chars().count();
-                            let end_c = start_c + display_text[m.start()..m.end()].chars().count();
-                            matched_span = Some((start_c, end_c, "원문/정규식"));
-                        } else if let Some(_m) = re.find(&text_nfd_norm) {
-                            matched_span = Some((0, display_text.chars().count().min(8), "원문/정규식(NFD)"));
-                        }
-                    }
-
-                    if use_text && matched_span.is_none() {
-                        let display_chars: Vec<char> = display_text.chars().collect();
-                        let (norm_chars, char_map) = state_worker.normalizer.to_nfd_norm_with_map(&display_text);
-                        let candidates = find_all_char_subslices(&norm_chars, &norm_query_chars);
-
-                        for (n_start, n_end) in candidates {
-                            if !use_jamo {
-                                if n_end < norm_chars.len() && is_jongseong_jamo(norm_chars[n_end]) {
-                                    continue;
-                                }
-                            }
-                            let orig_start = char_map.get(n_start).copied().unwrap_or(0);
-                            let orig_end = char_map
-                                .get(n_end.saturating_sub(1))
-                                .map(|&idx| idx + 1)
-                                .unwrap_or(orig_start + 1);
-                            if !check_word_boundary(
-                                &display_chars,
-                                orig_start,
-                                orig_end,
-                                has_leading_space,
-                                has_trailing_space,
-                            ) {
-                                continue;
-                            }
-                            matched_span = Some((orig_start, orig_end, "원문/음절"));
-                            break;
-                        }
-
-                        if matched_span.is_none() && text_raw.contains(core_query) {
-                            if let Some(byte_pos) = display_text.find(core_query) {
-                                let sc = display_text[..byte_pos].chars().count();
-                                let ec = sc + core_query.chars().count();
-                                if check_word_boundary(
-                                    &display_chars,
-                                    sc,
-                                    ec,
-                                    has_leading_space,
-                                    has_trailing_space,
-                                ) {
-                                    matched_span = Some((sc, ec, "원문(PUA)"));
-                                }
-                            } else if !has_leading_space && !has_trailing_space {
-                                matched_span = Some((0, display_text.chars().count().min(6), "원문(PUA)"));
-                            }
-                        }
-                    }
-                }
-
-                // 2. Morpheme layer matching
-                if use_morph && matched_span.is_none() && !morph_flat.is_empty() {
-                    let eojeol_analyses: Vec<&str> = morph_flat.split(" | ").collect();
-                    let words: Vec<&str> = display_text.split_whitespace().collect();
-
-                    if (use_jamo || bracket_tokens.is_some()) && bracket_tokens.is_some() {
-                        let b_tokens = bracket_tokens.as_ref().unwrap();
-                        for (idx, ea) in eojeol_analyses.iter().enumerate() {
-                            let ea_units = state_worker.normalizer.tokenize_text_units(ea);
-                            if find_bracket_query_match(b_tokens, &ea_units).is_some() {
-                                if let Some(&w) = words.get(idx) {
-                                    if let Some(byte_pos) = display_text.find(w) {
-                                        let sc = display_text[..byte_pos].chars().count();
-                                        let ec = sc + w.chars().count();
-                                        matched_span = Some((sc, ec, "형태소/자소"));
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if use_regex && compiled_regex.is_some() && matched_span.is_none() {
-                        let re = compiled_regex.as_ref().unwrap();
-                        for (idx, ea) in eojeol_analyses.iter().enumerate() {
-                            if re.is_match(ea) {
-                                if let Some(&w) = words.get(idx) {
-                                    if let Some(byte_pos) = display_text.find(w) {
-                                        let sc = display_text[..byte_pos].chars().count();
-                                        let ec = sc + w.chars().count();
-                                        matched_span = Some((sc, ec, "형태소/정규식"));
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if use_text && matched_span.is_none() {
-                        let norm_m = state_worker.normalizer.normalize_morph_str(&morph_flat);
-                        if norm_m.contains(&norm_morph_query) || morph_flat.contains(core_query) {
-                            for (idx, ea) in eojeol_analyses.iter().enumerate() {
-                                if state_worker.normalizer.normalize_morph_str(ea).contains(&norm_morph_query) || ea.contains(core_query) {
-                                    if let Some(&w) = words.get(idx) {
-                                        if let Some(byte_pos) = display_text.find(w) {
-                                            let sc = display_text[..byte_pos].chars().count();
-                                            let ec = sc + w.chars().count();
-                                            matched_span = Some((sc, ec, "형태분석"));
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // 3. Sense layer matching
-                if use_sense && matched_span.is_none() && !sense_flat.is_empty() {
-                    let eojeol_analyses: Vec<&str> = sense_flat.split(" | ").collect();
-                    let words: Vec<&str> = display_text.split_whitespace().collect();
-
-                    if (use_jamo || bracket_tokens.is_some()) && bracket_tokens.is_some() {
-                        let b_tokens = bracket_tokens.as_ref().unwrap();
-                        for (idx, ea) in eojeol_analyses.iter().enumerate() {
-                            let ea_units = state_worker.normalizer.tokenize_text_units(ea);
-                            if find_bracket_query_match(b_tokens, &ea_units).is_some() {
-                                if let Some(&w) = words.get(idx) {
-                                    if let Some(byte_pos) = display_text.find(w) {
-                                        let sc = display_text[..byte_pos].chars().count();
-                                        let ec = sc + w.chars().count();
-                                        matched_span = Some((sc, ec, "형태의미/자소"));
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if use_regex && compiled_regex.is_some() && matched_span.is_none() {
-                        let re = compiled_regex.as_ref().unwrap();
-                        for (idx, ea) in eojeol_analyses.iter().enumerate() {
-                            if re.is_match(ea) {
-                                if let Some(&w) = words.get(idx) {
-                                    if let Some(byte_pos) = display_text.find(w) {
-                                        let sc = display_text[..byte_pos].chars().count();
-                                        let ec = sc + w.chars().count();
-                                        matched_span = Some((sc, ec, "형태의미/정규식"));
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if use_text && matched_span.is_none() {
-                        let norm_s = state_worker.normalizer.normalize_morph_str(&sense_flat);
-                        if norm_s.contains(&norm_morph_query) || sense_flat.contains(core_query) {
-                            for (idx, ea) in eojeol_analyses.iter().enumerate() {
-                                if state_worker.normalizer.normalize_morph_str(ea).contains(&norm_morph_query) || ea.contains(core_query) {
-                                    if let Some(&w) = words.get(idx) {
-                                        if let Some(byte_pos) = display_text.find(w) {
-                                            let sc = display_text[..byte_pos].chars().count();
-                                            let ec = sc + w.chars().count();
-                                            matched_span = Some((sc, ec, "형태의미"));
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // 4. Syntax layer matching
-                if use_syntax && matched_span.is_none() && !syntax_tree.is_empty() {
-                    let first_word_len = display_text
-                        .split_whitespace()
-                        .next()
-                        .map(|w| w.chars().count())
-                        .unwrap_or(6);
-
-                    if (use_jamo || bracket_tokens.is_some()) && bracket_tokens.is_some() {
-                        let b_tokens = bracket_tokens.as_ref().unwrap();
-                        let syn_units = state_worker.normalizer.tokenize_text_units(&syntax_tree);
-                        if find_bracket_query_match(b_tokens, &syn_units).is_some() {
-                            matched_span = Some((0, first_word_len, "구문/자소"));
-                        }
-                    }
-                    if use_regex && compiled_regex.is_some() && matched_span.is_none() {
-                        let re = compiled_regex.as_ref().unwrap();
-                        if re.is_match(&syntax_tree) {
-                            matched_span = Some((0, first_word_len, "구문/정규식"));
-                        }
-                    }
-                    if use_text && matched_span.is_none() {
-                        let norm_syn = state_worker.normalizer.normalize_morph_str(&syntax_tree);
-                        if syntax_tree.contains(core_query) || norm_syn.contains(&norm_morph_query) {
-                            matched_span = Some((0, first_word_len, "구문분석"));
-                        }
-                    }
+                if matched_span.is_none() && search_unit == "text" {
+                    matched_span = evaluate_cross_sentence_match(
+                        &state_worker,
+                        &conn,
+                        &qctx,
+                        &doc_id,
+                        seq_no,
+                        &display_text,
+                        &text_raw,
+                        &text_nfd_norm,
+                        &morph_flat,
+                        &sense_flat,
+                        &syntax_tree,
+                    );
                 }
 
                 // Hit found!
-                if let Some((match_start, match_end, layer_name)) = matched_span {
+                if let Some((kwic_base_text, match_start, match_end, layer_name)) = matched_span {
                     total_matches += 1;
                     returned_count += 1;
 
                     let (raw_left, node, raw_right, w_cnt, rw_cnt, l_trunc, r_trunc) =
                         extract_kwic_by_word_count(
-                            &display_text,
+                            &kwic_base_text,
                             match_start,
                             match_end,
                             context_words,
@@ -2962,8 +3592,7 @@ fn handle_search_stream(
                         "hit": hit,
                         "matched_count": total_matches,
                     });
-                    if tx.send(format!("{}
-", hit_msg).into_bytes()).is_err() {
+                    if tx.send(format!("{}\n", hit_msg).into_bytes()).is_err() {
                         return; // client closed connection
                     }
 
@@ -2982,8 +3611,7 @@ fn handle_search_stream(
             "elapsed_ms": elapsed,
             "cancelled": cancelled,
         });
-        let _ = tx.send(format!("{}
-", done_msg).into_bytes());
+        let _ = tx.send(format!("{}\n", done_msg).into_bytes());
     });
 
     let reader = ChannelReader {
@@ -4596,5 +5224,156 @@ mod tests {
             drop(m);
             let _ = std::fs::remove_file(tmp_db);
         }
+    }
+
+    #[test]
+    fn test_search_unit_eojeol_sentence_text_and_eojeol_start_matching() {
+        let state = AppState {
+            db_path: PathBuf::from(":memory:"),
+            web_dir: PathBuf::from("../web"),
+            root_dir: PathBuf::from(".."),
+            hanbatang_path: PathBuf::from(""),
+            kopub_ttf_path: PathBuf::from(""),
+            kopub_otf_path: PathBuf::from(""),
+            normalizer: Normalizer::new(std::path::Path::new("assets/data/pua_table.json")),
+            memory_profile: MemoryProfile::detect(),
+            latest_search_seq: AtomicU64::new(0),
+            cancel_search_seq: AtomicU64::new(0),
+            db_builder: Arc::new(Mutex::new(DbBuildManager::new())),
+            port: 8787,
+        };
+
+        let query = "하[ㄴ/1/01].{1,10}/NNG";
+        assert!(has_regex_syntax(query));
+        let expanded = expand_bracket_syntax_to_regex(query);
+        let re_unanchored = Regex::new(&expanded).unwrap();
+        let re_anchored = Regex::new(&format!("^(?:{})", expanded)).unwrap();
+        let norm_q_nfd = state.normalizer.to_nfd_norm(query);
+        let norm_q_chars: Vec<char> = norm_q_nfd.chars().collect();
+        let norm_m_q = state.normalizer.normalize_morph_str(query);
+        let b_tokens = state.normalizer.parse_bracket_query(query);
+
+        let make_qctx = |unit: &'static str| SearchQueryContext {
+            core_query: query,
+            search_unit: unit,
+            req_eojeol_start: query_requires_eojeol_start(query),
+            has_leading_space: false,
+            has_trailing_space: false,
+            use_surface: false,
+            use_morph: true,
+            use_sense: false,
+            use_syntax: false,
+            use_text: false,
+            use_jamo: true,
+            use_regex: true,
+            norm_query_chars: &norm_q_chars,
+            norm_morph_query: &norm_m_q,
+            bracket_tokens: b_tokens.as_deref(),
+            compiled_regex: Some(&re_unanchored),
+            anchored_regex: Some(&re_anchored),
+        };
+
+        // 1. '자제하는[자제/NNG + 하/XSV + 는/ETM]' MUST NOT match in eojeol or sentence mode
+        let disp_false = "자제하는 모습을 보였다.";
+        let morph_false = "자제하는[자제/NNG + 하/XSV + 는/ETM] | 모습을[모습/NNG + 을/JKO] | 보였다.[보이/VV + 었/EP + 다/EF + ./SF]";
+        assert!(
+            evaluate_segment_match(
+                &state,
+                &make_qctx("eojeol"),
+                disp_false,
+                disp_false,
+                disp_false,
+                morph_false,
+                "",
+                ""
+            )
+            .is_none(),
+            "'자제하는' must NOT match in eojeol unit mode"
+        );
+        assert!(
+            evaluate_segment_match(
+                &state,
+                &make_qctx("sentence"),
+                disp_false,
+                disp_false,
+                disp_false,
+                morph_false,
+                "",
+                ""
+            )
+            .is_none(),
+            "'자제하는' must NOT match in sentence unit mode"
+        );
+
+        // 2. '하늘이[하늘/NNG+이/JKS]' MUST match in eojeol mode (eojeol starts with '하')
+        let disp_true_ej = "푸른 하늘이 열렸다.";
+        let morph_true_ej = "푸른[푸르/VA+ㄴ/ETM] | 하늘이[하늘/NNG+이/JKS] | 열렸다.[열리/VV+었/EP+다/EF+./SF]";
+        let m_ej = evaluate_segment_match(
+            &state,
+            &make_qctx("eojeol"),
+            disp_true_ej,
+            disp_true_ej,
+            disp_true_ej,
+            morph_true_ej,
+            "",
+            "",
+        );
+        assert!(m_ej.is_some(), "'하늘이[하늘/NNG+이/JKS]' should match in eojeol mode");
+        let (sc, ec, _) = m_ej.unwrap();
+        let matched_word: String = disp_true_ej.chars().skip(sc).take(ec - sc).collect();
+        assert_eq!(matched_word, "하늘이");
+
+        // 3. '하는[하/VV + 는/ETM] | 일을[일/NNG + 을/JKO]'
+        // - Does NOT match in eojeol mode (since /NNG is in the next eojeol)
+        // - DOES match in sentence mode (eojeol starts with '하' and crosses eojeol boundary within sentence)
+        let disp_cross_ej = "그가 하는 일을 보았다.";
+        let morph_cross_ej = "그가[그/NP + 가/JKS] | 하는[하/VV + 는/ETM] | 일을[일/NNG + 을/JKO] | 보았다.[보/VV + 았/EP + 다/EF + ./SF]";
+        assert!(
+            evaluate_segment_match(
+                &state,
+                &make_qctx("eojeol"),
+                disp_cross_ej,
+                disp_cross_ej,
+                disp_cross_ej,
+                morph_cross_ej,
+                "",
+                ""
+            )
+            .is_none(),
+            "Cross-eojeol '하는 일을' must NOT match in strict eojeol mode"
+        );
+        let m_sent = evaluate_segment_match(
+            &state,
+            &make_qctx("sentence"),
+            disp_cross_ej,
+            disp_cross_ej,
+            disp_cross_ej,
+            morph_cross_ej,
+            "",
+            "",
+        );
+        assert!(
+            m_sent.is_some(),
+            "Cross-eojeol '하는 일을' MUST match in sentence mode"
+        );
+        let (sc_s, ec_s, _) = m_sent.unwrap();
+        let matched_sent_span: String = disp_cross_ej.chars().skip(sc_s).take(ec_s - sc_s).collect();
+        assert_eq!(matched_sent_span, "하는 일을");
+
+        // 4. In text mode (unbounded), unanchored match across eojeol ('자제하는 모습을' -> '하는 모습/NNG') is allowed
+        let m_text = evaluate_segment_match(
+            &state,
+            &make_qctx("text"),
+            disp_false,
+            disp_false,
+            disp_false,
+            morph_false,
+            "",
+            "",
+        );
+        assert!(
+            m_text.is_some(),
+            "In text mode (unbounded), unanchored cross-eojeol match is allowed"
+        );
     }
 }

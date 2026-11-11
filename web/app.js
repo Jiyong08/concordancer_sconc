@@ -73,7 +73,11 @@ let isSearchInProgress = false;
   const docTotalCount = document.getElementById('doc-total-count');
   const docSelectedSentences = document.getElementById('doc-selected-sentences');
 
-  // User Corpus Bundles Elements
+  // Search Unit & User Corpus Bundles Elements
+  const selectSearchUnit = document.getElementById('select-search-unit');
+  const btnSetDefaultSearchUnit = document.getElementById('btn-set-default-search-unit');
+  const STORAGE_KEY_DEFAULT_SEARCH_UNIT = 'sconc_default_search_unit';
+
   const selectUserCorpus = document.getElementById('select-user-corpus');
   const btnCreateDocBundle = document.getElementById('btn-create-doc-bundle');
   const selectModalUserBundle = document.getElementById('select-modal-user-bundle');
@@ -199,6 +203,63 @@ let isSearchInProgress = false;
     const fontStack = FONT_MAP[selectCorpusFont.value] || FONT_MAP.kopub;
     document.documentElement.style.setProperty('--font-corpus', fontStack);
   });
+
+  // Search Unit (어절 단위 / 문장 단위 / 텍스트 단위) & User-Selectable Default Persistence
+  const SEARCH_UNIT_BASE_LABELS = {
+    eojeol: '어절 단위 검색',
+    sentence: '문장 단위 검색',
+    text: '텍스트 단위 검색',
+  };
+
+  function getSavedDefaultSearchUnit() {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_DEFAULT_SEARCH_UNIT);
+      if (saved === 'eojeol' || saved === 'sentence' || saved === 'text') {
+        return saved;
+      }
+    } catch (_) {}
+    return 'eojeol';
+  }
+
+  function refreshSearchUnitOptionLabels() {
+    if (!selectSearchUnit) return;
+    const defUnit = getSavedDefaultSearchUnit();
+    Array.from(selectSearchUnit.options).forEach((opt) => {
+      const base = SEARCH_UNIT_BASE_LABELS[opt.value] || opt.textContent;
+      opt.textContent = opt.value === defUnit ? `${base} (기본)` : base;
+    });
+    if (btnSetDefaultSearchUnit) {
+      const isCurDefault = selectSearchUnit.value === defUnit;
+      btnSetDefaultSearchUnit.textContent = isCurDefault ? '📌 기본값' : '📌 기본값 지정';
+      btnSetDefaultSearchUnit.classList.toggle('is-default', isCurDefault);
+      btnSetDefaultSearchUnit.title = isCurDefault
+        ? `현재 선택된 '${SEARCH_UNIT_BASE_LABELS[defUnit]}'이(가) 기본값(디폴트)으로 저장되어 있습니다.`
+        : `클릭 시 현재 선택된 '${SEARCH_UNIT_BASE_LABELS[selectSearchUnit.value]}'을(를) 기본값(디폴트)으로 저장합니다.`;
+    }
+  }
+
+  if (selectSearchUnit) {
+    selectSearchUnit.value = getSavedDefaultSearchUnit();
+    refreshSearchUnitOptionLabels();
+    selectSearchUnit.addEventListener('change', () => {
+      refreshSearchUnitOptionLabels();
+      runSearch();
+    });
+  }
+
+  if (btnSetDefaultSearchUnit && selectSearchUnit) {
+    btnSetDefaultSearchUnit.addEventListener('click', () => {
+      const curUnit = selectSearchUnit.value || 'eojeol';
+      try {
+        localStorage.setItem(STORAGE_KEY_DEFAULT_SEARCH_UNIT, curUnit);
+      } catch (_) {}
+      refreshSearchUnitOptionLabels();
+      btnSetDefaultSearchUnit.textContent = '✓ 기본값 저장됨';
+      setTimeout(() => {
+        refreshSearchUnitOptionLabels();
+      }, 1200);
+    });
+  }
 
   // Re-run search when Context Words or Limit changes
   selectContextWords.addEventListener('change', () => runSearch());
@@ -405,11 +466,11 @@ let isSearchInProgress = false;
       if (selectMode) selectMode.value = mode;
       if (selectLayer) selectLayer.value = layer;
 
-      // Sync target/method checkboxes with preset mode
-      if (chkTargetSurface) chkTargetSurface.checked = (mode === 'all' || mode === 'surface' || mode === 'jamo' || mode === 'regex');
-      if (chkTargetMorph) chkTargetMorph.checked = (mode === 'all' || mode === 'morph' || mode === 'regex');
-      if (chkTargetSense) chkTargetSense.checked = (mode === 'all' || mode === 'sense');
-      if (chkTargetSyntax) chkTargetSyntax.checked = (mode === 'all' || mode === 'syntax');
+      // Sync single-select target radio & method checkboxes with preset mode
+      if (chkTargetSurface) chkTargetSurface.checked = (mode !== 'morph' && mode !== 'sense' && mode !== 'syntax');
+      if (chkTargetMorph) chkTargetMorph.checked = (mode === 'morph');
+      if (chkTargetSense) chkTargetSense.checked = (mode === 'sense');
+      if (chkTargetSyntax) chkTargetSyntax.checked = (mode === 'syntax');
       if (chkMethodJamo) chkMethodJamo.checked = (mode === 'jamo' || (q.includes('[') && q.includes(']') && q.includes('/')));
       if (chkMethodRegex) chkMethodRegex.checked = (mode === 'regex');
       updateSearchMethodSummaryLabel();
@@ -1203,8 +1264,19 @@ let isSearchInProgress = false;
     searchInput.value = tab.query;
     automata.reset();
     automata.feedRawText(tab.query);
-    selectMode.value = tab.mode;
-    selectLayer.value = tab.layer;
+    if (selectMode) selectMode.value = tab.mode;
+    if (selectLayer) selectLayer.value = tab.layer;
+    if (selectSearchUnit && tab.searchUnit) {
+      selectSearchUnit.value = tab.searchUnit;
+      refreshSearchUnitOptionLabels();
+    }
+    if (tab.targets) {
+      if (chkTargetSurface) chkTargetSurface.checked = (tab.targets === 'surface');
+      if (chkTargetMorph) chkTargetMorph.checked = (tab.targets === 'morph');
+      if (chkTargetSense) chkTargetSense.checked = (tab.targets === 'sense');
+      if (chkTargetSyntax) chkTargetSyntax.checked = (tab.targets === 'syntax');
+      updateSearchMethodSummaryLabel();
+    }
     if (tab.docIds) {
       selectedDocIds = new Set(tab.docIds);
     } else if (tab.docId && tab.docId !== 'ALL') {
@@ -1318,39 +1390,7 @@ let isSearchInProgress = false;
       return;
     }
 
-    kwicTbody.innerHTML = visibleHits
-      .map((h) => {
-        const badges = [];
-        if (h.corpus_category.includes('옛한글')) {
-          badges.push('<span class="layer-badge badge-old">옛한글</span>');
-        }
-        if (h.has_morph) {
-          badges.push('<span class="layer-badge badge-morph">형태</span>');
-        }
-        if (h.has_sense) {
-          badges.push('<span class="layer-badge badge-sense">의미</span>');
-        }
-        if (h.has_syntax) {
-          badges.push('<span class="layer-badge badge-syntax">구문</span>');
-        }
-        const loc = h.page_ref
-          ? `${h.doc_id} (${h.page_ref})`
-          : `${h.doc_id} #${h.seq_no}`;
-
-        return `
-          <tr class="kwic-row" data-seg-id="${h.segment_id}" data-text="${escapeHtml(h.text_unicode)}" title="클릭: 상세 뷰어 / 더블클릭: 뷰어 펼치기 / 마우스 우클릭: 원본 파일 점프">
-            <td>
-              <div style="font-weight:700; font-size:0.76rem; color:#1e293b;">${escapeHtml(loc)}</div>
-              <div style="font-size:0.7rem; color:#64748b;">[${escapeHtml(h.match_layer)}]</div>
-            </td>
-            <td>${badges.join('')}</td>
-            <td class="kwic-left">${escapeHtml(h.left_context)}</td>
-            <td class="kwic-node-cell"><span class="kwic-node">${escapeHtml(h.node || '·')}</span></td>
-            <td class="kwic-right">${escapeHtml(h.right_context)}</td>
-          </tr>
-        `;
-      })
-      .join('');
+    kwicTbody.innerHTML = visibleHits.map((h) => createKwicRowHtml(h)).join('');
 
     const rows = kwicTbody.querySelectorAll('.kwic-row');
     rows.forEach((r) => {
@@ -1892,15 +1932,13 @@ let isSearchInProgress = false;
 
 
   // =========================================================================
-  // Multi-Target & Multi-Method Search Configuration Modal Window Logic
+  // Single-Target & Multi-Method Search Configuration Modal Window Logic
   // =========================================================================
   function getSelectedSearchTargets() {
-    const targets = [];
-    if (chkTargetSurface && chkTargetSurface.checked) targets.push('surface');
-    if (chkTargetMorph && chkTargetMorph.checked) targets.push('morph');
-    if (chkTargetSense && chkTargetSense.checked) targets.push('sense');
-    if (chkTargetSyntax && chkTargetSyntax.checked) targets.push('syntax');
-    return targets.length > 0 ? targets : ['surface'];
+    if (chkTargetMorph && chkTargetMorph.checked) return ['morph'];
+    if (chkTargetSense && chkTargetSense.checked) return ['sense'];
+    if (chkTargetSyntax && chkTargetSyntax.checked) return ['syntax'];
+    return ['surface'];
   }
 
   function getSelectedSearchMethods() {
@@ -1911,18 +1949,21 @@ let isSearchInProgress = false;
     return methods.length > 0 ? methods : ['text'];
   }
 
+  function hasRegexSyntaxJs(q) {
+    if (!q) return false;
+    return /(?:\.\*|\.\+|\.\?|\.\{\d|\{\d+,\d*\}|\\[dwsbDWSB]|[\^\$]|[^\[\/]\+|[^\[\/]\*)/.test(q);
+  }
+
   function updateSearchMethodSummaryLabel() {
     const targets = getSelectedSearchTargets();
     const methods = getSelectedSearchMethods();
 
-    const targetNames = [];
-    if (targets.includes('surface')) targetNames.push('원문');
-    if (targets.includes('morph')) targetNames.push('형태');
-    if (targets.includes('sense')) targetNames.push('의미');
-    if (targets.includes('syntax')) targetNames.push('구문');
-    const targetStr = targetNames.length === 4 ? '전체 층위' : targetNames.join('·');
+    let targetStr = '원문 표층';
+    if (targets.includes('morph')) targetStr = '형태소/품사';
+    else if (targets.includes('sense')) targetStr = '형태의미';
+    else if (targets.includes('syntax')) targetStr = '구문표지';
 
-    let methodStr = '기본 텍스트';
+    let methodStr = '기본';
     const hasJamo = methods.includes('jamo');
     const hasRegex = methods.includes('regex');
     if (hasJamo && hasRegex) {
@@ -1934,10 +1975,10 @@ let isSearchInProgress = false;
     }
 
     if (searchMethodSummaryLabel) {
-      searchMethodSummaryLabel.textContent = methodStr;
+      searchMethodSummaryLabel.textContent = `${targetStr} · ${methodStr}`;
     }
     if (methodModalSummaryText) {
-      methodModalSummaryText.textContent = `${targetStr} · ${methodStr}`;
+      methodModalSummaryText.textContent = `${targetStr} · ${methodStr === '기본' ? '기본 텍스트' : methodStr}`;
     }
   }
 
@@ -1971,7 +2012,7 @@ let isSearchInProgress = false;
       });
     }
 
-    // Checkbox change handlers
+    // Radio & checkbox change handlers
     [chkTargetSurface, chkTargetMorph, chkTargetSense, chkTargetSyntax,
      chkMethodJamo, chkMethodRegex].forEach((chk) => {
       if (chk) {
@@ -1981,27 +2022,26 @@ let isSearchInProgress = false;
       }
     });
 
-    // Quick preset buttons for targets
-    if (btnTargetAll) {
-      btnTargetAll.addEventListener('click', () => {
-        if (chkTargetSurface) chkTargetSurface.checked = true;
-        if (chkTargetMorph) chkTargetMorph.checked = true;
-        if (chkTargetSense) chkTargetSense.checked = true;
-        if (chkTargetSyntax) chkTargetSyntax.checked = true;
-        updateSearchMethodSummaryLabel();
-      });
-    }
-    if (btnTargetSurfaceOnly) {
-      btnTargetSurfaceOnly.addEventListener('click', () => {
-        if (chkTargetSurface) chkTargetSurface.checked = true;
-        if (chkTargetMorph) chkTargetMorph.checked = false;
-        if (chkTargetSense) chkTargetSense.checked = false;
-        if (chkTargetSyntax) chkTargetSyntax.checked = false;
-        updateSearchMethodSummaryLabel();
-      });
-    }
-
     updateSearchMethodSummaryLabel();
+  }
+
+  function extractMatchedEojeolAnnotation(nodeStr, flatStr) {
+    if (!nodeStr || !flatStr) return '';
+    const nodeWords = nodeStr.trim().split(/\s+/).filter(Boolean);
+    if (nodeWords.length === 0) return '';
+    const eas = flatStr.split(' | ');
+    const matchedEas = [];
+    for (const ea of eas) {
+      const openIdx = ea.indexOf('[');
+      const surf = openIdx > 0 ? ea.slice(0, openIdx).trim() : ea.trim();
+      if (nodeWords.some((nw) => surf === nw || surf.includes(nw) || nw.includes(surf))) {
+        matchedEas.push(ea.trim());
+      }
+    }
+    if (matchedEas.length > 0) {
+      return matchedEas.slice(0, 3).join(' | ');
+    }
+    return '';
   }
 
   // KWIC 테이블 행 생성 헬퍼
@@ -2023,6 +2063,28 @@ let isSearchInProgress = false;
       ? `${h.doc_id} (${h.page_ref})`
       : `${h.doc_id} #${h.seq_no}`;
 
+    const isMorphMatch = (h.match_layer && h.match_layer.includes('형태') && !h.match_layer.includes('의미')) || (chkTargetMorph && chkTargetMorph.checked);
+    const isSenseMatch = (h.match_layer && h.match_layer.includes('의미')) || (chkTargetSense && chkTargetSense.checked);
+    const isSyntaxMatch = (h.match_layer && h.match_layer.includes('구문')) || (chkTargetSyntax && chkTargetSyntax.checked);
+
+    let nodeSubHtml = '';
+    let rightLayerHtml = '';
+    if (isMorphMatch && h.morph_flat) {
+      const nodeMorph = extractMatchedEojeolAnnotation(h.node, h.morph_flat);
+      if (nodeMorph) {
+        nodeSubHtml = `<div class="kwic-node-analysis">${escapeHtml(nodeMorph)}</div>`;
+      }
+      rightLayerHtml = `<div class="kwic-layer-subline">🧩 <strong>형태분석:</strong> ${escapeHtml(h.morph_flat)}</div>`;
+    } else if (isSenseMatch && h.sense_flat) {
+      const nodeSense = extractMatchedEojeolAnnotation(h.node, h.sense_flat);
+      if (nodeSense) {
+        nodeSubHtml = `<div class="kwic-node-analysis sense">${escapeHtml(nodeSense)}</div>`;
+      }
+      rightLayerHtml = `<div class="kwic-layer-subline sense">🔖 <strong>형태의미:</strong> ${escapeHtml(h.sense_flat)}</div>`;
+    } else if (isSyntaxMatch && h.syntax_tree) {
+      rightLayerHtml = `<div class="kwic-layer-subline syntax">🌲 <strong>구문분석:</strong> ${escapeHtml(h.syntax_tree)}</div>`;
+    }
+
     return `
       <tr class="kwic-row" data-seg-id="${h.segment_id}" data-text="${escapeHtml(h.text_unicode)}" title="클릭: 상세 뷰어 / 더블클릭: 뷰어 펼치기 / 마우스 우클릭: 원본 파일 점프">
         <td>
@@ -2031,8 +2093,8 @@ let isSearchInProgress = false;
         </td>
         <td>${badges.join('')}</td>
         <td class="kwic-left">${escapeHtml(h.left_context)}</td>
-        <td class="kwic-node-cell"><span class="kwic-node">${escapeHtml(h.node || '·')}</span></td>
-        <td class="kwic-right">${escapeHtml(h.right_context)}</td>
+        <td class="kwic-node-cell"><span class="kwic-node">${escapeHtml(h.node || '·')}</span>${nodeSubHtml}</td>
+        <td class="kwic-right"><div>${escapeHtml(h.right_context)}</div>${rightLayerHtml}</td>
       </tr>
     `;
   }
@@ -2064,9 +2126,14 @@ let isSearchInProgress = false;
     if (q.includes('[') && q.includes(']') && q.includes('/') && !selectedMethods.includes('jamo')) {
       selectedMethods.push('jamo');
     }
+    // [정규식 자동 활성화] 검색어에 정규표현식 패턴(.{1,10}, .*, .+ 등)이 포함되어 있으면 정규식 모드 자동 추가
+    if (hasRegexSyntaxJs(q) && !selectedMethods.includes('regex')) {
+      selectedMethods.push('regex');
+    }
     const targets = getSelectedSearchTargets().join(',');
     const methods = selectedMethods.join(',');
-    const mode = selectMode ? selectMode.value : 'all';
+    const searchUnit = selectSearchUnit ? selectSearchUnit.value : 'eojeol';
+    const mode = selectMode ? selectMode.value : targets;
     const layer = selectLayer ? selectLayer.value : 'ALL';
     const isAllDocs = selectedDocIds.has('ALL') || selectedDocIds.size === globalDocuments.length || selectedDocIds.size === 0;
     const docIdsParam = isAllDocs ? 'ALL' : Array.from(selectedDocIds).join(',');
@@ -2074,8 +2141,8 @@ let isSearchInProgress = false;
     const contextWords = selectContextWords.value;
     const limit = selectLimit.value;
 
-    if (!q.trim() && isAllDocs) {
-      kwicResultMeta.innerHTML = '<span style="color:#64748b;">검색어를 입력하거나 특정 문서를 선택해 주세요.</span>';
+    if (!q.trim() && isAllDocs && targets === 'surface') {
+      kwicResultMeta.innerHTML = '<span style="color:#64748b;">검색어를 입력하거나 특정 문서(또는 형태소/품사 등 분석 층위)를 선택해 주세요.</span>';
       return;
     }
 
@@ -2099,20 +2166,22 @@ let isSearchInProgress = false;
     }
 
     const ctxLabel = contextWords === '999' ? '문장 전체' : `좌우 ${contextWords}어절`;
-    let docLabel = '전체 문서';
+    const unitLabel = SEARCH_UNIT_BASE_LABELS[searchUnit] || '어절 단위 검색';
+    const targetLayerLabel = targets === 'morph' ? '형태소 분석 말뭉치' : targets === 'sense' ? '형태의미 말뭉치' : targets === 'syntax' ? '구문분석 말뭉치' : '전체 문서';
+    let docLabel = targetLayerLabel;
     if (selectedDocIds && !selectedDocIds.has('ALL') && selectedDocIds.size > 0) {
       docLabel = selectedDocIds.size === 1 ? Array.from(selectedDocIds)[0] : `${selectedDocIds.size}개 문서`;
     }
 
     kwicResultTitle.textContent = q
-      ? `용례 검색 결과: "${q}" [${docLabel}] (${ctxLabel})`
-      : `문서 열람 (${docLabel} · ${ctxLabel})`;
+      ? `용례 검색 결과: "${q}" [${docLabel} · ${unitLabel}] (${ctxLabel})`
+      : `말뭉치 열람 (${docLabel} · ${ctxLabel})`;
 
     kwicResultMeta.innerHTML = '<strong style="color:#2563eb;">⚡ 실시간 검색 시작… 문장이 발견되는 즉시 아래에 바로 추가됩니다.</strong>';
     kwicTbody.innerHTML = ''; // 이전 결과 비우고 즉시 대기 화면 구축
 
     // 검색 탭 생성 또는 재사용
-    const tabTitle = q || getDocSelectionSummaryLabel();
+    const tabTitle = q || (targets !== 'surface' ? targetLayerLabel : getDocSelectionSummaryLabel());
     let targetTab = null;
     if (searchTabs.length > 0 && activeTabId) {
       const curTab = searchTabs.find((t) => t.id === activeTabId);
@@ -2130,6 +2199,8 @@ let isSearchInProgress = false;
         query: q,
         title: tabTitle,
         mode,
+        targets,
+        searchUnit,
         layer,
         docId,
         docIds: new Set(selectedDocIds),
@@ -2152,6 +2223,8 @@ let isSearchInProgress = false;
       targetTab.query = q;
       targetTab.title = tabTitle;
       targetTab.mode = mode;
+      targetTab.targets = targets;
+      targetTab.searchUnit = searchUnit;
       targetTab.layer = layer;
       targetTab.docId = docId;
       targetTab.docIds = new Set(selectedDocIds);
@@ -2176,6 +2249,7 @@ let isSearchInProgress = false;
       mode,
       targets,
       methods,
+      search_unit: searchUnit,
       layer_filter: layer,
       doc_id: docId,
       doc_ids: docIdsParam,

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>sconc v0.1 — 한국어 통시·공시 다층 말뭉치 통합 검색기</title>
-  <link rel="stylesheet" href="/styles.css?v=7" />
+  <link rel="stylesheet" href="/styles.css?v=8" />
 </head>
 <body>
   <div class="app-shell ratio-full" id="app-shell">
@@ -79,19 +79,22 @@
               </button>
             </div>
 
-            <!-- 1-2. 사용자말뭉치 (문서 묶음) -->
-            <div class="opt-pill" id="opt-user-corpus-pill">
-              <label for="select-user-corpus">사용자말뭉치</label>
-              <select id="select-user-corpus" title="사용자가 '문서 묶음'을 통해 만든 말뭉치 목록입니다. 선택 시 해당 묶음의 문서들만 자동으로 검색 대상이 됩니다.">
-                <option value="">(전체 문서 / 미지정)</option>
+            <!-- 1-2. 검색단위 (어절 단위 / 문장 단위 / 텍스트 단위 + 사용자 디폴트 지정) -->
+            <div class="opt-pill" id="opt-search-unit-pill">
+              <label for="select-search-unit">검색단위</label>
+              <select id="select-search-unit" title="검색어가 적용되는 범위를 선택합니다. 어절 단위: 어절 시작부분부터 단일 어절 안에서만 검색 / 문장 단위: 어절 경계를 넘어서 문장 경계 안에서 검색 / 텍스트 단위: 어절·문장 경계 없이 검색">
+                <option value="eojeol" selected>어절 단위 검색</option>
+                <option value="sentence">문장 단위 검색</option>
+                <option value="text">텍스트 단위 검색</option>
               </select>
+              <button type="button" class="btn-unit-default" id="btn-set-default-search-unit" title="현재 선택한 검색 단위를 기본값(디폴트)으로 저장합니다.">📌 기본값</button>
             </div>
 
             <!-- 2. 검색방식 -->
             <div class="opt-pill">
               <label for="btn-search-method-trigger">검색방식</label>
-              <button type="button" class="btn-doc-selector-trigger" id="btn-search-method-trigger" title="검색 대상 층위(원문/형태소/의미/구문)와 연산 방식(텍스트/자소/정규식)을 별도의 창에서 선택합니다.">
-                <span id="search-method-summary-label">기본</span> ▾
+              <button type="button" class="btn-doc-selector-trigger" id="btn-search-method-trigger" title="검색 대상 층위(원문 표층/형태소·품사/형태의미/구문표지 중 택1)와 특수 연산 방식(자소/정규식)을 설정합니다.">
+                <span id="search-method-summary-label">원문 표층 · 기본</span> ▾
               </button>
             </div>
 
@@ -456,37 +459,66 @@
           </div>
           <div class="scrollable-card-body">
             <div class="guide-grid">
-              <!-- 1. 다층 주석(형태·의미·구문) 및 정규식 검색 안내 -->
-              <div class="guide-box" style="width: 480px;">
-                <h3>1. 형태소 · 형태의미(어깨번호) · 구문 표지 · 정규식 검색법</h3>
-                <table class="guide-table">
+              <!-- 1. 검색 단위(어절·문장·텍스트) 및 다층 주석(형태·의미·구문) 검색 안내 -->
+              <div class="guide-box" style="width: 520px;">
+                <h3>1. 검색 단위(어절·문장·텍스트) 및 검색 대상 층위(단일 선택) 안내</h3>
+                <p style="font-size:0.81rem; margin:0 0 8px 0; color:#334155;">
+                  상단 <strong>[검색단위]</strong> 메뉴에서 검색어가 적용되는 범위를 지정하고, 우측 <strong>[📌 기본값]</strong> 버튼으로 원하는 기본 검색 단위를 저장할 수 있습니다. 또한 <strong>[검색방식] → [1. 검색 대상 층위]</strong>에서는 4개 층위 중 하나를 선택하여 해당 분석 말뭉치에서만 정밀 검색합니다.
+                </p>
+                <table class="guide-table" style="margin-bottom:10px;">
                   <thead>
                     <tr>
-                      <th style="width:120px;">검색 방식</th>
-                      <th>설명 및 문법</th>
-                      <th>검색어 예시</th>
+                      <th style="width:118px;">검색 단위</th>
+                      <th>검색어 적용 범위 및 어절 시작 매칭 규칙</th>
+                      <th style="width:155px;"><code>하[ㄴ/1/01].{1,10}/NNG</code> 예시</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr>
+                      <td><strong>어절 단위 검색</strong></td>
+                      <td><strong>어절 시작부분</strong>부터 매칭하며, <strong>단일 어절 내부</strong>에서만 검색합니다. 어절 중간에 나타나는 형태소(예: <code>자제하는</code>의 <code>하</code>)는 제외됩니다.</td>
+                      <td><code>하늘이[하늘/NNG+이/JKS]</code>, <code>하나님과[하나님/NNG+과/JKB]</code> 매칭 (<code>자제하는</code> 제외)</td>
+                    </tr>
+                    <tr>
+                      <td><strong>문장 단위 검색</strong></td>
+                      <td><strong>어절 시작부분</strong>부터 매칭하되, <strong>어절 경계를 넘어서 한 문장 경계 안에서</strong> 검색합니다.</td>
+                      <td><code>하는[하/VV+는/ETM] 일을[일/NNG+을/JKO]</code> 매칭 (<code>자제하는</code> 제외)</td>
+                    </tr>
+                    <tr>
+                      <td><strong>텍스트 단위 검색</strong></td>
+                      <td>어절 시작 제한이나 어절·문장 <strong>경계 없이</strong> 텍스트 전체(인접 문장 경계 포함)에서 자유롭게 검색합니다.</td>
+                      <td>어절 내부·어절 간·문장 간 경계 없이 모든 일치 구간 검색</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <table class="guide-table">
+                  <thead>
+                    <tr>
+                      <th style="width:118px;">검색 대상 층위 (택1)</th>
+                      <th>설명 및 전용 말뭉치 필터링</th>
+                      <th style="width:155px;">검색어 예시</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><strong>원문 표층</strong></td>
+                      <td>원문 본문 및 옛한글 표층 텍스트에서 검색합니다.</td>
+                      <td><code>하ᄂᆞᆯ</code>, <code>[ㄱ/ㅏ/01]</code></td>
+                    </tr>
+                    <tr>
                       <td><strong>형태소 / 품사</strong></td>
-                      <td><code>형태소/품사태그</code> 또는 <code>/품사태그</code> 입력. 첫가끝 종성(<code>ᆫ/ETM</code>)과 호환자모(<code>ㄴ/ETM</code>)를 자동 통합 매칭합니다.</td>
-                      <td><code>교양/NNG</code>, <code>ㄴ/ETM</code>, <code>하/XSV</code></td>
+                      <td><strong>형태소 분석 말뭉치</strong>에서만 검색하며, KWIC 화면에 형태분석 결과를 함께 표시합니다. (<code>ᆫ/ETM</code>·<code>ㄴ/ETM</code> 자동 통합)</td>
+                      <td><code>하[ㄴ/1/01].{1,10}/NNG</code>, <code>교양/NNG</code>, <code>ㄴ/ETM</code></td>
                     </tr>
                     <tr>
-                      <td><strong>형태의미 (어깨번호)</strong></td>
-                      <td>세종 형태의미 말뭉치의 표준국어대사전 어깨번호(<code>단어__번호</code> 또는 <code>단어__번호/품사</code>)로 동음이의어를 구별 검색합니다.</td>
-                      <td><code>세계__02</code>, <code>생각__01/NNG</code>, <code>일__01</code></td>
+                      <td><strong>형태의미</strong></td>
+                      <td><strong>형태의미 분석 말뭉치</strong>에서만 어깨번호(<code>단어__번호</code>)를 검색하고 결과를 표시합니다.</td>
+                      <td><code>세계__02</code>, <code>생각__01/NNG</code></td>
                     </tr>
                     <tr>
-                      <td><strong>구문분석 표지</strong></td>
-                      <td>세종 구문분석 트리뱅크(S-식)의 구문 표지(예: 주어 <code>NP_SBJ</code>, 목적어 <code>NP_OBJ</code>, 관형절 <code>VP_MOD</code>)로 검색합니다.</td>
+                      <td><strong>구문표지</strong></td>
+                      <td><strong>구문분석 말뭉치</strong>에서만 S-식 구문 태그를 검색하고 구문 트리를 표시합니다.</td>
                       <td><code>NP_SBJ</code>, <code>VP_MOD</code>, <code>NP_OBJ</code></td>
-                    </tr>
-                    <tr>
-                      <td><strong>정규표현식 (Regex)</strong></td>
-                      <td>표준 정규식을 사용하여 패턴 검색을 수행합니다. 실행 시간이 길어질 경우 우측 <strong>[⏹ 검색 종료]</strong> 버튼으로 즉시 중단할 수 있습니다.</td>
-                      <td><code>[가-힣]+에서\s+[가-힣]+으로</code></td>
                     </tr>
                   </tbody>
                 </table>
@@ -709,45 +741,41 @@
       <!-- 본문 내용: 2열 카드 레이아웃 -->
       <div class="search-method-modal-body">
         <div class="method-modal-grid">
-          <!-- 좌측: 검색 대상 층위 -->
+          <!-- 좌측: 검색 대상 층위 (단일 선택) -->
           <div class="method-section-card">
             <div class="method-section-header">
               <div class="method-section-title">
-                <span>📂 1. 검색 대상 층위 (복합 선택)</span>
-              </div>
-              <div class="method-quick-btns">
-                <button type="button" class="btn btn-outline btn-xs" id="btn-target-all">전체 층위</button>
-                <button type="button" class="btn btn-outline btn-xs" id="btn-target-surface-only">원문만</button>
+                <span>📂 1. 검색 대상 층위 (단일 선택)</span>
               </div>
             </div>
-            <p class="method-section-desc">입력한 검색 질의어를 매칭할 말뭉치 데이터의 층위를 선택합니다.</p>
+            <p class="method-section-desc">4개의 선택지 중 하나만 선택할 수 있습니다. <strong>형태소/품사</strong> 선택 시 <strong>형태소 분석 말뭉치</strong>에서만 검색이 이루어지고 분석 결과가 화면에 표시됩니다.</p>
             <div class="method-item-list">
               <label class="method-item-label">
-                <input type="checkbox" id="chk-target-surface" checked />
+                <input type="radio" name="search-target-layer" id="chk-target-surface" value="surface" checked />
                 <div class="method-item-text">
                   <strong>원문 표층 (surface)</strong>
                   <span>원문 본문 및 옛한글 표층 텍스트에서 검색</span>
                 </div>
               </label>
               <label class="method-item-label">
-                <input type="checkbox" id="chk-target-morph" />
+                <input type="radio" name="search-target-layer" id="chk-target-morph" value="morph" />
                 <div class="method-item-text">
                   <strong>형태소/품사 (morph)</strong>
-                  <span>형태소 분절 및 세종 품사 태그에서 검색 (예: 세계/NNG, 가/VV)</span>
+                  <span>형태소 분석 말뭉치 전용 검색 및 형태분석 결과 표시 (예: 세계/NNG, 가/VV)</span>
                 </div>
               </label>
               <label class="method-item-label">
-                <input type="checkbox" id="chk-target-sense" />
+                <input type="radio" name="search-target-layer" id="chk-target-sense" value="sense" />
                 <div class="method-item-text">
                   <strong>형태의미 (sense)</strong>
-                  <span>형태소별 동음이의어 어휘 의미 번호에서 검색 (예: 세계__02, 눈__01)</span>
+                  <span>형태의미 분석 말뭉치 전용 어깨번호 검색 및 결과 표시 (예: 세계__02, 눈__01)</span>
                 </div>
               </label>
               <label class="method-item-label">
-                <input type="checkbox" id="chk-target-syntax" />
+                <input type="radio" name="search-target-layer" id="chk-target-syntax" value="syntax" />
                 <div class="method-item-text">
                   <strong>구문표지 (syntax)</strong>
-                  <span>문장 구문 분석 트리 및 구문 범주 태그에서 검색 (예: NP_SBJ, VP)</span>
+                  <span>구문분석 말뭉치 전용 트리 및 구문 범주 태그 검색 (예: NP_SBJ, VP)</span>
                 </div>
               </label>
             </div>
@@ -924,7 +952,7 @@
       </div>
     </div>
   </div>
-  <script src="/hangul_automata.js?v=7"></script>
-  <script src="/app.js?v=7"></script>
+  <script src="/hangul_automata.js?v=8"></script>
+  <script src="/app.js?v=8"></script>
 </body>
 </html>
