@@ -243,7 +243,7 @@ fn main() {
     let event_loop = EventLoop::new();
     let window_icon = tao::window::Icon::from_rgba(EMBEDDED_ICON_RGBA.to_vec(), 64, 64).ok();
     let window = WindowBuilder::new()
-        .with_title("Concordance (sconc) — 한국어 통시·공시 다층 말뭉치 통합 검색기")
+        .with_title("한국어 말뭉치 통합 검색기 S-conc v0.2")
         .with_inner_size(LogicalSize::new(1480.0, 920.0))
         .with_window_icon(window_icon)
         .build(&event_loop)

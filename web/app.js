@@ -1708,7 +1708,7 @@ let isSearchInProgress = false;
   }
 
   // ========================================================
-  // Full Top Collapse (맨위 sconc v0.1 헤더 + 탭 + 검색 옵션 바 일괄 접기/펼치기)
+  // Full Top Collapse (맨위 헤더 + 탭 + 검색 옵션 바 일괄 접기/펼치기)
   // 검색창 가장 우측 버튼(#btn-toggle-options-inline) 하나로 통합 제어
   // ========================================================
   const applyTopCollapse = (collapsed) => {
@@ -1720,7 +1720,7 @@ let isSearchInProgress = false;
       if (inlineFoldText) inlineFoldText.textContent = '검색 옵션 펼치기';
       if (btnToggleOptionsInline) {
         btnToggleOptionsInline.classList.add('active');
-        btnToggleOptionsInline.title = '맨 위의 sconc v0.1 헤더와 검색 옵션을 다시 펼칩니다.';
+        btnToggleOptionsInline.title = '맨 위의 상단 헤더와 검색 옵션을 다시 펼칩니다.';
       }
     } else {
       appShell.classList.remove('top-collapsed');
@@ -1729,7 +1729,7 @@ let isSearchInProgress = false;
       if (inlineFoldText) inlineFoldText.textContent = '검색 옵션 접기';
       if (btnToggleOptionsInline) {
         btnToggleOptionsInline.classList.remove('active');
-        btnToggleOptionsInline.title = '맨 위의 sconc v0.1 헤더와 검색 옵션을 모두 접어 화면을 최대화합니다.';
+        btnToggleOptionsInline.title = '맨 위의 상단 헤더와 검색 옵션을 모두 접어 화면을 최대화합니다.';
       }
     }
   };
