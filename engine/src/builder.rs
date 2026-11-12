@@ -1191,23 +1191,44 @@ pub fn parse_learner_xml(
         String::new()
     };
 
-    // 포맷 1: <SENTENCE> ... <s>원문</s> ... <word><w>어절</w><morph pos="품사">형태소</morph></word>
+    // <Header> 등 메타데이터를 말뭉치 본문에서 제외하기 위해 <BODY> 영역 우선 추출
+    let re_body = Regex::new(r"(?is)<BODY\b[^>]*>(.*?)</BODY>").unwrap();
+    let body_text = re_body
+        .captures(&xml_text)
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str())
+        .unwrap_or(&xml_text);
+
+    // 포맷 1: <P> 또는 <SENTENCE> ... <word><w>어절</w><morph pos="품사">형태소</morph></word>
+    let re_p = Regex::new(r"(?is)<P\b[^>]*>(.*?)</P>").unwrap();
     let re_sentence = Regex::new(r"(?is)<SENTENCE\b[^>]*>(.*?)</SENTENCE>").unwrap();
     let re_word = Regex::new(r"(?is)<word\b[^>]*>(.*?)</word>").unwrap();
     let re_morph = Regex::new(r#"(?is)<morph\b[^>]*pos=["']([^"']*)["'][^>]*>(.*?)</morph>"#).unwrap();
 
-    for (s_idx, cap) in re_sentence.captures_iter(&xml_text).enumerate() {
-        let s_block = cap.get(1).map(|m| m.as_str()).unwrap_or("");
-        let raw_s = extract_tag("s", s_block);
-        if raw_s.is_empty() {
-            continue;
-        }
+    let sent_blocks: Vec<&str> = if re_p.is_match(body_text) {
+        re_p.captures_iter(body_text)
+            .filter_map(|c| c.get(1).map(|m| m.as_str()))
+            .collect()
+    } else {
+        re_sentence
+            .captures_iter(body_text)
+            .filter_map(|c| c.get(1).map(|m| m.as_str()))
+            .collect()
+    };
+
+    for (s_idx, s_block) in sent_blocks.into_iter().enumerate() {
         let mut words_data = Vec::new();
         let mut morph_flat_parts = Vec::new();
+        let mut raw_words = Vec::new();
 
         for (w_idx, w_cap) in re_word.captures_iter(s_block).enumerate() {
             let w_block = w_cap.get(1).map(|m| m.as_str()).unwrap_or("");
             let w_form = extract_tag("w", w_block);
+            if w_form.is_empty() {
+                continue;
+            }
+            raw_words.push(w_form.clone());
+
             let mut m_items = Vec::new();
             for m_cap in re_morph.captures_iter(w_block) {
                 let m_pos = m_cap.get(1).map(|m| m.as_str().trim()).unwrap_or("");
@@ -1227,6 +1248,15 @@ pub fn parse_learner_xml(
                 "morph": m_str,
                 "sense": ""
             }));
+        }
+
+        let raw_s = if !raw_words.is_empty() {
+            raw_words.join(" ")
+        } else {
+            extract_tag("s", s_block)
+        };
+        if raw_s.is_empty() {
+            continue;
         }
 
         let seq = s_idx + 1;
@@ -2099,7 +2129,12 @@ pub fn build_folder_into_db_native(
                 layers = "원문(한양PUA→유니코드 변환) + 장차/언어 메타".to_string();
                 title = format!("{} (옛한글 문헌)", stem);
             }
-        } else if head_slice.contains("<LearnerCorpus") || head_slice.contains("<SENTENCE>") {
+        } else if head_slice.contains("<Korean_Learners_Corpus")
+            || head_slice.contains("<LearnerCorpus")
+            || head_slice.contains("<MorphemeAnnotations")
+            || head_slice.contains("<SENTENCE>")
+            || head_slice.contains("<SENTENCE ")
+        {
             if let Ok((theme, nat, grade, s, _)) = parse_learner_xml(f, &doc_id, norm) {
                 segs = s;
                 ctype = "형태 분석 말뭉치 (학습자)".to_string();

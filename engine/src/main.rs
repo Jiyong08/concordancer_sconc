@@ -974,4 +974,75 @@ mod tests {
             "In text mode (unbounded), mid-eojeol match is allowed"
         );
     }
+
+    #[test]
+    fn test_korean_learners_corpus_xml_parsing() {
+        let tmp_dir = std::env::temp_dir().join("sconc_test_klc_xml");
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+
+        let xml_path = tmp_dir.join("sample_klc.xml");
+        let xml_content = r#"<?xml version="1.0" encoding="utf-8"?>
+<Korean_Learners_Corpus>
+  <Header>
+    <Title>한국어 학습자 말뭉치</Title>
+    <AssignmentTheme>집 구하기</AssignmentTheme>
+    <Nationality>중국</Nationality>
+    <DataGrade>1급</DataGrade>
+  </Header>
+  <BODY>
+    <P to="20" from="0">
+      <SENTENCE to="20" from="0">
+        <s>원문_대체_무시</s>
+        <MorphemeAnnotations>
+          <word>
+            <w>그리고</w>
+            <morph from="0" to="3" analyzedType="Normal" pos="MAJ" subsequence="1">그리고</morph>
+          </word>
+          <word>
+            <w>부엌이</w>
+            <morph from="4" to="7" analyzedType="Normal" pos="NNG" subsequence="1">부엌</morph>
+            <morph from="4" to="7" analyzedType="Normal" pos="JKS" subsequence="2">이</morph>
+          </word>
+          <word>
+            <w>있으면</w>
+            <morph from="8" to="11" analyzedType="Normal" pos="VV" subsequence="1">있</morph>
+            <morph from="8" to="11" analyzedType="Normal" pos="EC" subsequence="2">으면</morph>
+          </word>
+          <word>
+            <w>좋겠다.</w>
+            <morph from="12" to="16" analyzedType="Ambiguity" pos="VA" subsequence="1">좋</morph>
+            <morph from="12" to="16" analyzedType="Ambiguity" pos="EP" subsequence="2">겠</morph>
+            <morph from="12" to="16" analyzedType="Ambiguity" pos="EF" subsequence="3">다</morph>
+            <morph from="12" to="16" analyzedType="Normal" pos="SF" subsequence="4">.</morph>
+          </word>
+        </MorphemeAnnotations>
+      </SENTENCE>
+    </P>
+  </BODY>
+</Korean_Learners_Corpus>"#;
+        std::fs::write(&xml_path, xml_content).unwrap();
+
+        let norm = Normalizer::new(std::path::Path::new("nonexistent.json"));
+        let (theme, nat, grade, segs, _) =
+            builder::parse_learner_xml(&xml_path, "KLC", &norm).unwrap();
+        assert_eq!(theme, "집 구하기");
+        assert_eq!(nat, "중국");
+        assert_eq!(grade, "1급");
+        assert_eq!(segs.len(), 1, "Only <BODY> <P> sentence should be parsed");
+
+        let seg = &segs[0];
+        assert_eq!(seg.text_raw, "그리고 부엌이 있으면 좋겠다.");
+        assert!(
+            !seg.text_raw.contains("한국어 학습자 말뭉치") && !seg.text_raw.contains("집 구하기"),
+            "Header metadata must not leak into corpus text"
+        );
+        assert!(
+            seg.morph_flat.contains("좋겠다.[좋/VA + 겠/EP + 다/EF + ./SF]"),
+            "morph_flat must be in Sejong format, got: {}",
+            seg.morph_flat
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
 }
