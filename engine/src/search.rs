@@ -20,24 +20,37 @@ pub(crate) fn extract_kwic_by_word_count(
     let s = start_char.min(total);
     let e = end_char.min(total).max(s);
 
-    let node: String = chars[s..e].iter().collect();
+    // 핵심어(Node)가 한 음절에 그치지 않고 검색된 대상을 포함한 전체 어절(Eojeol) 단위로 나오도록 확장
+    let mut node_s = s;
+    if node_s < total && !chars[node_s].is_whitespace() {
+        while node_s > 0 && !chars[node_s - 1].is_whitespace() {
+            node_s -= 1;
+        }
+    }
+    let mut node_e = e;
+    if node_e > node_s {
+        if node_e <= total && !chars[node_e - 1].is_whitespace() {
+            while node_e < total && !chars[node_e].is_whitespace() {
+                node_e += 1;
+            }
+        }
+    } else {
+        node_e = node_s;
+    }
+
+    let node: String = chars[node_s..node_e].iter().collect();
 
     if context_words >= 999 {
-        let left: String = chars[0..s].iter().collect();
-        let right: String = chars[e..total].iter().collect();
+        let left: String = chars[0..node_s].iter().collect();
+        let right: String = chars[node_e..total].iter().collect();
         return (left, node, right, 999, 999, false, false);
     }
 
-    // Left Context: keep any attached prefix of the matched word + up to `context_words` preceding eojeols
-    let mut left_idx = s;
-    // 1) If s is inside a word (not preceded by whitespace), move back to the start of the current word
-    while left_idx > 0 && !chars[left_idx - 1].is_whitespace() {
-        left_idx -= 1;
-    }
-    // 2) Now count `context_words` preceding words backwards
+    // Left Context: node_s 직전부터 context_words 개수만큼의 앞선 어절 카운트
+    let mut left_idx = node_s;
     let mut words_counted = 0usize;
     while left_idx > 0 && words_counted < context_words {
-        // Skip whitespace before the word
+        // 단어 앞 공백 건너뛰기
         let mut ws_pos = left_idx;
         while ws_pos > 0 && chars[ws_pos - 1].is_whitespace() {
             ws_pos -= 1;
@@ -46,7 +59,7 @@ pub(crate) fn extract_kwic_by_word_count(
             left_idx = 0;
             break;
         }
-        // Skip the word characters
+        // 단어 문자 건너뛰기
         while ws_pos > 0 && !chars[ws_pos - 1].is_whitespace() {
             ws_pos -= 1;
         }
@@ -54,14 +67,11 @@ pub(crate) fn extract_kwic_by_word_count(
         words_counted += 1;
     }
 
-    let left: String = chars[left_idx..s].iter().collect();
+    let left: String = chars[left_idx..node_s].iter().collect();
     let left_truncated = left_idx > 0;
 
-    // Right Context: keep any attached suffix of the matched word + up to `context_words` following eojeols
-    let mut right_idx = e;
-    while right_idx < total && !chars[right_idx].is_whitespace() {
-        right_idx += 1;
-    }
+    // Right Context: node_e 직후부터 context_words 개수만큼의 뒤선 어절 카운트
+    let mut right_idx = node_e;
     let mut r_words_counted = 0usize;
     while right_idx < total && r_words_counted < context_words {
         let mut ws_pos = right_idx;
@@ -79,7 +89,7 @@ pub(crate) fn extract_kwic_by_word_count(
         r_words_counted += 1;
     }
 
-    let right: String = chars[e..right_idx].iter().collect();
+    let right: String = chars[node_e..right_idx].iter().collect();
     let right_truncated = right_idx < total;
 
     (
@@ -823,7 +833,7 @@ pub(crate) fn evaluate_segment_match(
     if qctx.use_surface {
         if qctx.search_unit == "eojeol" {
             for &(w_sc, w_ec, w_str) in &word_spans {
-                let (w_clean, skipped_c) = strip_leading_surface_quotes(w_str);
+                let (w_clean, _skipped_c) = strip_leading_surface_quotes(w_str);
                 if w_clean.is_empty() {
                     continue;
                 }
@@ -831,20 +841,13 @@ pub(crate) fn evaluate_segment_match(
                 if qctx.use_regex {
                     if req_start {
                         if let Some(re_anc) = qctx.anchored_regex {
-                            if let Some(m) = re_anc.find(w_clean) {
-                                let m_chars = w_clean[..m.end()].chars().count();
-                                return Some((
-                                    w_sc + skipped_c,
-                                    (w_sc + skipped_c + m_chars).max(w_ec),
-                                    "원문/정규식",
-                                ));
+                            if let Some(_) = re_anc.find(w_clean) {
+                                return Some((w_sc, w_ec, "원문/정규식"));
                             }
                         }
                     } else if let Some(re) = qctx.compiled_regex {
-                        if let Some(m) = re.find(w_clean) {
-                            let sc = w_clean[..m.start()].chars().count();
-                            let ec = sc + w_clean[m.start()..m.end()].chars().count();
-                            return Some((w_sc + skipped_c + sc, w_sc + skipped_c + ec, "원문/정규식"));
+                        if let Some(_) = re.find(w_clean) {
+                            return Some((w_sc, w_ec, "원문/정규식"));
                         }
                     }
                 }
@@ -852,13 +855,9 @@ pub(crate) fn evaluate_segment_match(
                 if (qctx.use_jamo || qctx.bracket_tokens.is_some()) && !qctx.use_regex {
                     if let Some(b_tokens) = qctx.bracket_tokens {
                         let units = state.normalizer.tokenize_text_units(w_clean);
-                        if let Some((sc, ec)) = find_bracket_query_match(b_tokens, &units) {
+                        if let Some((sc, _ec)) = find_bracket_query_match(b_tokens, &units) {
                             if !req_start || sc == 0 {
-                                return Some((
-                                    w_sc + skipped_c + sc,
-                                    w_sc + skipped_c + ec,
-                                    "원문/자소",
-                                ));
+                                return Some((w_sc, w_ec, "원문/자소"));
                             }
                         }
                     }
@@ -882,11 +881,7 @@ pub(crate) fn evaluate_segment_match(
                         if qctx.has_trailing_space && orig_end < w_clean.chars().count() {
                             continue;
                         }
-                        return Some((
-                            w_sc + skipped_c + orig_start,
-                            w_sc + skipped_c + orig_end,
-                            "원문/음절",
-                        ));
+                        return Some((w_sc, w_ec, "원문/음절"));
                     }
                 }
             }

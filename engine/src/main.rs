@@ -808,4 +808,30 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&tmp_dir);
     }
+
+    #[test]
+    fn test_eojeol_unit_kwic_keyword_full_eojeol() {
+        use crate::search::extract_kwic_by_word_count;
+        let text = "그리고 부엌이 있으면 좋겠다.";
+        // '부엌이' 어절 내부의 한 음절 '이'(index 6..7)가 매칭되었을 때
+        let (left, node, right, _, _, _, _) = extract_kwic_by_word_count(text, 6, 7, 5);
+        assert_eq!(node, "부엌이", "핵심어(node)는 '이' 한 음절이 아니라 전체 어절 '부엌이'여야 함");
+        assert_eq!(left, "그리고 ");
+        assert_eq!(right, " 있으면 좋겠다.");
+        assert_eq!(format!("{}{}{}", left, node, right), text);
+
+        // 첫 어절의 한 음절 '그'(index 0..1)가 매칭되었을 때
+        let (left2, node2, right2, _, _, _, _) = extract_kwic_by_word_count(text, 0, 1, 5);
+        assert_eq!(node2, "그리고", "핵심어는 첫 어절 전체 '그리고'여야 함");
+        assert_eq!(left2, "");
+        assert_eq!(right2, " 부엌이 있으면 좋겠다.");
+        assert_eq!(format!("{}{}{}", left2, node2, right2), text);
+
+        // 마지막 어절의 한 음절 '좋'(index 12..13)이 매칭되었을 때
+        let (left3, node3, right3, _, _, _, _) = extract_kwic_by_word_count(text, 12, 13, 5);
+        assert_eq!(node3, "좋겠다.", "핵심어는 마지막 어절 전체 '좋겠다.'여야 함");
+        assert_eq!(left3, "그리고 부엌이 있으면 ");
+        assert_eq!(right3, "");
+        assert_eq!(format!("{}{}{}", left3, node3, right3), text);
+    }
 }
