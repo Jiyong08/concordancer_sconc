@@ -593,3 +593,62 @@ pub(crate) fn handle_build_db_cancel(state: &AppState) -> ApiResponse {
     }), 200)
 }
 
+#[derive(Debug, Deserialize)]
+pub(crate) struct SaveTxtRequest {
+    pub(crate) default_name: String,
+    pub(crate) content: String,
+}
+
+pub(crate) fn handle_export_save_txt(state: &AppState, body: &[u8]) -> ApiResponse {
+    let payload: SaveTxtRequest = match serde_json::from_slice(body) {
+        Ok(p) => p,
+        Err(e) => return json_response(&serde_json::json!({ "ok": false, "error": e.to_string() }), 400),
+    };
+
+    #[cfg(target_os = "windows")]
+    {
+        let initial_dir = state.root_dir.to_string_lossy().replace('\'', "''");
+        let safe_name = payload.default_name.replace('\'', "''");
+        let ps_script = format!(
+            "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; \
+             Add-Type -AssemblyName System.Windows.Forms; \
+             $d = New-Object System.Windows.Forms.SaveFileDialog; \
+             $d.Title = '검색 결과 TXT 저장 위치 및 파일명 지정'; \
+             $d.Filter = '텍스트 파일 (*.txt)|*.txt|TSV 파일 (*.tsv)|*.tsv|모든 파일 (*.*)|*.*'; \
+             $d.DefaultExt = 'txt'; \
+             $d.InitialDirectory = '{}'; \
+             $d.FileName = '{}'; \
+             if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {{ Write-Output $d.FileName }}",
+            initial_dir, safe_name
+        );
+
+        let output = match Command::new("powershell")
+            .args(["-NoProfile", "-STA", "-Command", &ps_script])
+            .output()
+        {
+            Ok(o) => o,
+            Err(e) => return json_response(&serde_json::json!({ "ok": false, "error": format!("저장 대화상자 실행 오류: {}", e) }), 500),
+        };
+
+        let selected = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if selected.is_empty() {
+            return json_response(&serde_json::json!({ "ok": false, "cancelled": true }), 200);
+        }
+
+        if let Err(e) = fs::write(&selected, payload.content.as_bytes()) {
+            return json_response(&serde_json::json!({ "ok": false, "error": format!("파일 쓰기 실패: {}", e) }), 500);
+        }
+
+        return json_response(&serde_json::json!({ "ok": true, "saved_path": selected }), 200);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let out_path = state.root_dir.join(&payload.default_name);
+        if let Err(e) = fs::write(&out_path, payload.content.as_bytes()) {
+            return json_response(&serde_json::json!({ "ok": false, "error": e.to_string() }), 500);
+        }
+        json_response(&serde_json::json!({ "ok": true, "saved_path": out_path.to_string_lossy() }), 200)
+    }
+}
+

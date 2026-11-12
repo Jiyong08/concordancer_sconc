@@ -195,7 +195,7 @@ pub(crate) fn handle_source_jump(
     };
 
     let seg_info = conn.query_row(
-        "SELECT s.doc_id, d.title, s.seq_no, s.sent_id, s.page_ref, s.text_raw, s.text_unicode, d.source_files_list
+        "SELECT s.doc_id, d.title, s.seq_no, COALESCE(s.sent_id_str, ''), COALESCE(s.page_info, ''), s.text_raw, s.text_unicode, d.source_files_list
          FROM segments s
          JOIN documents d ON s.doc_id = d.doc_id
          WHERE s.segment_id = ?",
@@ -220,7 +220,14 @@ pub(crate) fn handle_source_jump(
             Err(e) => return json_response(&serde_json::json!({ "error": e.to_string() }), 404),
         };
 
-    let files: Vec<String> = serde_json::from_str(&source_files_json).unwrap_or_default();
+    let files: Vec<String> = serde_json::from_str::<Vec<String>>(&source_files_json)
+        .unwrap_or_else(|_| {
+            source_files_json
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        });
     let file_name = files.first().cloned().unwrap_or_else(|| format!("{}.txt", doc_id));
 
     // [요구사항 2] 원본 파일 경로 탐색: source_files 테이블의 rel_path 및 다중 후보 경로 종합 검색
@@ -307,7 +314,7 @@ pub(crate) fn handle_source_jump(
 
     if result_lines.is_empty() {
         if let Ok(mut stmt) = conn.prepare(
-            "SELECT seq_no, text_raw, text_unicode, sent_id, page_ref
+            "SELECT seq_no, text_raw, text_unicode, COALESCE(sent_id_str, ''), COALESCE(page_info, '')
              FROM segments
              WHERE doc_id = ? AND seq_no BETWEEN ? - 5 AND ? + 5
              ORDER BY seq_no ASC",

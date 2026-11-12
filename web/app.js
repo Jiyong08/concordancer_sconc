@@ -1477,8 +1477,8 @@ let isSearchInProgress = false;
   });
   btnSubsearchReset.addEventListener('click', resetSubsearch);
 
-  // 3. Search Result Export (텍스트 파일 저장 기능)
-  btnExportKwicTxt.addEventListener('click', () => {
+  // 3. Search Result Export (사용자 지정 위치·파일명으로 텍스트 파일 저장)
+  btnExportKwicTxt.addEventListener('click', async () => {
     const tab = searchTabs.find((t) => t.id === activeTabId);
     if (!tab || !tab.data || !tab.data.hits) {
       alert('저장할 검색 결과가 없습니다.');
@@ -1529,17 +1529,30 @@ let isSearchInProgress = false;
     });
 
     const fileContent = '\uFEFF' + lines.join('\r\n');
-    const blob = new Blob([fileContent], { type: 'text/tab-separated-values;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
     const safeTitle = (tab.title || 'results').replace(/[\\/:*?"<>|]/g, '_');
     const dateStr = new Date().toISOString().slice(0, 10);
-    a.href = url;
-    a.download = `concordance_${safeTitle}_${dateStr}.txt`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    const defaultName = `concordance_${safeTitle}_${dateStr}.txt`;
+
+    try {
+      btnExportKwicTxt.disabled = true;
+      btnExportKwicTxt.textContent = '💾 저장 위치 선택 중...';
+      const res = await fetch('/api/export/save-txt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ default_name: defaultName, content: fileContent }),
+      });
+      const data = await res.json();
+      if (data.ok && data.saved_path) {
+        alert(`✅ 검색 결과(${hits.length}건)가 저장되었습니다.\n\n저장 위치: ${data.saved_path}`);
+      } else if (data.error) {
+        alert(`저장 오류: ${data.error}`);
+      }
+    } catch (err) {
+      alert(`TXT 저장 요청 실패: ${err.message}`);
+    } finally {
+      btnExportKwicTxt.disabled = false;
+      btnExportKwicTxt.textContent = '💾 결과 TXT 저장';
+    }
   });
 
   // 6. Right-click Context Menu & Source Jump

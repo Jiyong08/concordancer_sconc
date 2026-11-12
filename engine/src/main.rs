@@ -14,8 +14,8 @@ pub use normalizer::Normalizer;
 use editor::{handle_open_editor, handle_source_jump};
 use handlers::{
     handle_build_db, handle_build_db_cancel, handle_build_db_status, handle_build_db_stop,
-    handle_document_delete, handle_overview, handle_pick_folder, handle_segment_detail,
-    handle_segment_edit,
+    handle_document_delete, handle_export_save_txt, handle_overview, handle_pick_folder,
+    handle_segment_detail, handle_segment_edit,
 };
 use models::{binary_response, parse_query_params, ApiResponse, AppState, MemoryProfile};
 use normalizer::find_bracket_query_match;
@@ -320,6 +320,7 @@ fn dispatch_request(
         | (&http::Method::POST, "/api/build_db/stop") => handle_build_db_stop(state),
         (&http::Method::POST, "/api/build-db/cancel")
         | (&http::Method::POST, "/api/build_db/cancel") => handle_build_db_cancel(state),
+        (&http::Method::POST, "/api/export/save-txt") => handle_export_save_txt(state, body),
         (&http::Method::GET, "/api/export/mapping.tsv") => serve_static_file(
             &state.root_dir.join("db").join("corpus_db_mapping.tsv"),
             "text/tab-separated-values; charset=utf-8",
