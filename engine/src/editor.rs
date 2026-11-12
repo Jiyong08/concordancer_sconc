@@ -1,11 +1,9 @@
-use crate::models::{json_response, AppState};
+use crate::models::{json_response, ApiResponse, AppState};
 use rusqlite::{params, Connection};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-
-use tiny_http::Response;
 
 #[derive(Debug, Serialize)]
 pub(crate) struct SourceJumpLine {
@@ -168,7 +166,7 @@ pub(crate) fn open_in_external_editor(file_path: &Path, line_no: Option<usize>) 
     }
 }
 
-pub(crate) fn handle_open_editor(params: &HashMap<String, String>) -> Response<std::io::Cursor<Vec<u8>>> {
+pub(crate) fn handle_open_editor(params: &HashMap<String, String>) -> ApiResponse {
     let file_path_str = match params.get("file_path") {
         Some(p) if !p.is_empty() => p,
         _ => return json_response(&serde_json::json!({ "error": "file_path required" }), 400),
@@ -185,7 +183,7 @@ pub(crate) fn handle_open_editor(params: &HashMap<String, String>) -> Response<s
 pub(crate) fn handle_source_jump(
     state: &AppState,
     params: &HashMap<String, String>,
-) -> Response<std::io::Cursor<Vec<u8>>> {
+) -> ApiResponse {
     let segment_id: i64 = match params.get("segment_id").and_then(|v| v.parse().ok()) {
         Some(id) => id,
         None => return json_response(&serde_json::json!({ "error": "segment_id required" }), 400),

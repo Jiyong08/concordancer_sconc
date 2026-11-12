@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod builder;
 mod editor;
 mod handlers;
@@ -15,9 +17,16 @@ use handlers::{
     handle_document_delete, handle_overview, handle_pick_folder, handle_segment_detail,
     handle_segment_edit,
 };
-use models::{parse_query_params, AppState, MemoryProfile};
+use models::{binary_response, parse_query_params, ApiResponse, AppState, MemoryProfile};
 use normalizer::find_bracket_query_match;
 use search::{handle_search, handle_search_cancel, handle_search_stream};
+use tao::{
+    dpi::LogicalSize,
+    event::{Event, WindowEvent},
+    event_loop::{ControlFlow, EventLoop},
+    window::WindowBuilder,
+};
+use wry::WebViewBuilder;
 
 const EMBEDDED_INDEX_HTML: &[u8] = include_bytes!("../../web/index.html");
 const EMBEDDED_STYLES_CSS: &[u8] = include_bytes!("../../web/styles.css");
@@ -31,12 +40,9 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
-use tiny_http::{Header, Method, Response, Server, StatusCode};
-
-fn serve_static_file(path: &Path, content_type: &str) -> Response<std::io::Cursor<Vec<u8>>> {
+fn serve_static_file(path: &Path, content_type: &str) -> ApiResponse {
     serve_static_or_embedded(path, None, content_type)
 }
 
@@ -44,24 +50,19 @@ fn serve_static_or_embedded(
     path: &Path,
     embedded: Option<&'static [u8]>,
     content_type: &str,
-) -> Response<std::io::Cursor<Vec<u8>>> {
+) -> ApiResponse {
     let bytes_opt = fs::read(path)
         .ok()
         .or_else(|| embedded.map(|b| b.to_vec()));
     match bytes_opt {
-        Some(bytes) => {
-            let header =
-                Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes()).unwrap();
-            let no_cache =
-                Header::from_bytes(&b"Cache-Control"[..], &b"no-cache, no-store, must-revalidate"[..]).unwrap();
-            let pragma =
-                Header::from_bytes(&b"Pragma"[..], &b"no-cache"[..]).unwrap();
-            Response::from_data(bytes)
-                .with_header(header)
-                .with_header(no_cache)
-                .with_header(pragma)
-        }
-        None => Response::from_string("404 Not Found").with_status_code(StatusCode(404)),
+        Some(bytes) => http::Response::builder()
+            .status(200)
+            .header("Content-Type", content_type)
+            .header("Cache-Control", "no-cache, no-store, must-revalidate")
+            .header("Pragma", "no-cache")
+            .body(bytes)
+            .unwrap_or_else(|_| http::Response::new(Vec::new())),
+        None => binary_response(404, "text/plain; charset=utf-8", b"404 Not Found".to_vec()),
     }
 }
 
@@ -234,75 +235,7 @@ fn detect_installed_browsers() -> Vec<BrowserInfo> {
     list
 }
 
-fn is_chromium_based(path_str: &str) -> bool {
-    let low = path_str.to_lowercase();
-    low.contains("msedge.exe")
-        || low.contains("chrome.exe")
-        || low.contains("whale.exe")
-        || low.contains("brave.exe")
-}
-
-fn launch_specific_browser(browser_path: &str, url: &str, app_mode: bool) {
-    if !browser_path.is_empty() && Path::new(browser_path).exists() {
-        if app_mode && is_chromium_based(browser_path) {
-            let _ = Command::new(browser_path)
-                .args([
-                    &format!("--app={}", url),
-                    "--no-proxy-server",
-                    "--window-size=1480,920",
-                ])
-                .spawn();
-        } else if is_chromium_based(browser_path) {
-            let _ = Command::new(browser_path)
-                .args(["--no-proxy-server", url])
-                .spawn();
-        } else {
-            let _ = Command::new(browser_path).arg(url).spawn();
-        }
-        return;
-    }
-
-    // browser_path가 지정되지 않은 경우, 독립 실행형 데스크톱 창(App Mode)으로
-    // 공용 네트워크 프록시 차단 없이 실행하기 위해 설치된 Edge/Chrome/Whale을 우선 탐색
-    if app_mode {
-        for b in detect_installed_browsers() {
-            if b.installed && !b.path.is_empty() && is_chromium_based(&b.path) {
-                if Command::new(&b.path)
-                    .args([
-                        &format!("--app={}", url),
-                        "--no-proxy-server",
-                        "--window-size=1480,920",
-                    ])
-                    .spawn()
-                    .is_ok()
-                {
-                    return;
-                }
-            }
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let _ = Command::new("cmd").args(["/C", "start", "", url]).spawn();
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let _ = Command::new("open").arg(url).spawn();
-    }
-    #[cfg(target_os = "linux")]
-    {
-        let _ = Command::new("xdg-open").arg(url).spawn();
-    }
-}
-
-fn open_browser_with_root(url: &str, root_dir: &Path) {
-    let cfg = load_sconc_config(root_dir);
-    let use_app_mode = cfg.default_browser != "system" || cfg.browser_path.is_empty();
-    launch_specific_browser(&cfg.browser_path, url, use_app_mode);
-}
-
-fn handle_installed_browsers(state: &AppState) -> Response<std::io::Cursor<Vec<u8>>> {
+fn handle_installed_browsers(state: &AppState) -> ApiResponse {
     let browsers = detect_installed_browsers();
     let cfg = load_sconc_config(&state.root_dir);
 
@@ -312,17 +245,13 @@ fn handle_installed_browsers(state: &AppState) -> Response<std::io::Cursor<Vec<u
         "current_path": cfg.browser_path,
         "browsers": browsers
     });
-    Response::from_string(json.to_string())
-        .with_header(Header::from_bytes(&b"Content-Type"[..], &b"application/json; charset=utf-8"[..]).unwrap())
+    models::json_response(&json, 200)
 }
 
-fn handle_switch_browser(state: &AppState, params: &HashMap<String, String>) -> Response<std::io::Cursor<Vec<u8>>> {
+fn handle_switch_browser(state: &AppState, params: &HashMap<String, String>) -> ApiResponse {
     let browser_id = params.get("browser_id").map(|s| s.as_str()).unwrap_or("system");
     let browser_path = params.get("browser_path").map(|s| s.as_str()).unwrap_or("");
     let set_default = params.get("set_default").map(|s| s == "1" || s == "true").unwrap_or(true);
-    let open_now = params.get("open_now").map(|s| s == "1" || s == "true").unwrap_or(true);
-    let port = state.port;
-    let url = format!("http://127.0.0.1:{}", port);
 
     if set_default {
         let cfg = SconcConfig {
@@ -332,19 +261,14 @@ fn handle_switch_browser(state: &AppState, params: &HashMap<String, String>) -> 
         save_sconc_config(&state.root_dir, &cfg);
     }
 
-    if open_now {
-        launch_specific_browser(browser_path, &url, browser_id != "system");
-    }
-
     let json = serde_json::json!({
         "status": "ok",
-        "message": format!("브라우저 설정이 적용되었습니다. (id={}, set_default={})", browser_id, set_default),
+        "message": format!("설정이 저장되었습니다. (현재 순수 네이티브 창 모드로 실행 중)"),
         "browser_id": browser_id,
         "browser_path": browser_path,
         "set_default": set_default
     });
-    Response::from_string(json.to_string())
-        .with_header(Header::from_bytes(&b"Content-Type"[..], &b"application/json; charset=utf-8"[..]).unwrap())
+    models::json_response(&json, 200)
 }
 
 
@@ -485,131 +409,127 @@ fn main() {
         return;
     }
 
-    let bind_addr = format!("127.0.0.1:{}", port);
-    let url = format!("http://127.0.0.1:{}", port);
+    let _ = auto_open;
+    let event_loop = EventLoop::new();
+    let window = WindowBuilder::new()
+        .with_title("Concordance (sconc) — 한국어 통시·공시 다층 말뭉치 통합 검색기")
+        .with_inner_size(LogicalSize::new(1480.0, 920.0))
+        .build(&event_loop)
+        .expect("Failed to create native window");
 
-    println!("================================================================");
-    println!("  Concordance (sconc.exe) — 한국어 통시·공시 다층 말뭉치 통합 검색기");
-    println!("  [독립 실행형(Standalone Zero-Install) 애플리케이션 모드]");
-    println!("================================================================");
-    println!("  * 프로젝트 루트 : {}", root_dir.display());
-    println!("  * 데이터베이스  : {}", db_path.display());
-    println!(
-        "  * 메모리 프로파일: {} (총 {:.1}GB / 가용 {:.1}GB)",
-        mem_profile.tier_label, mem_profile.total_ram_gb, mem_profile.available_ram_gb
-    );
-    println!("  * 내장 DB 빌더  : Rust Native Builder (Python 등 외부 설치 불필요)");
-    println!("  * 로컬 주소     : {} (공용 네트워크 프록시 우회)", url);
-    println!("================================================================");
+    let state_proto = Arc::clone(&state);
+    #[cfg(any(target_os = "windows", target_os = "android"))]
+    let app_url = "http://sconc.localhost/";
+    #[cfg(not(any(target_os = "windows", target_os = "android")))]
+    let app_url = "sconc://localhost/";
 
-    let server = match Server::http(&bind_addr) {
-        Ok(s) => s,
-        Err(_) => {
-            println!("  [안내] 포트 {}에서 실행 중인 이전 sconc 프로세스를 종료하고 새 엔진으로 교체합니다...", port);
-            #[cfg(target_os = "windows")]
-            {
-                let my_pid = std::process::id();
-                let _ = Command::new("taskkill")
-                    .args(["/F", "/FI", &format!("PID ne {}", my_pid), "/IM", "sconc.exe"])
-                    .output();
-            }
-            let mut bound_server = None;
-            for _ in 0..15 {
-                std::thread::sleep(std::time::Duration::from_millis(150));
-                if let Ok(s) = Server::http(&bind_addr) {
-                    bound_server = Some(s);
-                    break;
-                }
-            }
-            match bound_server {
-                Some(s) => {
-                    println!("  [완료] 새 검색기 엔진이 포트 {}에 바인딩되었습니다.", port);
-                    s
-                }
-                None => {
-                    println!("  [안내] 포트 {}에서 이미 검색기 엔진이 실행 중입니다.", port);
-                    if auto_open {
-                        println!("  [안내] 독립 실행 창을 엽니다: {}", url);
-                        open_browser_with_root(&url, &root_dir);
-                    }
-                    return;
-                }
-            }
+    let _webview = WebViewBuilder::new()
+        .with_asynchronous_custom_protocol("sconc".into(), move |_webview_id, request, responder| {
+            let state_req = Arc::clone(&state_proto);
+            std::thread::spawn(move || {
+                let method = request.method().clone();
+                let uri = request.uri();
+                let path_part = uri.path().to_string();
+                let query_url = uri
+                    .query()
+                    .map(|q| format!("?{}", q))
+                    .unwrap_or_default();
+                let body = request.body().to_vec();
+                let resp = dispatch_request(&state_req, &method, &path_part, &query_url, &body);
+                responder.respond(resp);
+            });
+        })
+        .with_url(app_url)
+        .build(&window)
+        .expect("Failed to create WebView");
+
+    event_loop.run(move |event, _, control_flow| {
+        *control_flow = ControlFlow::Wait;
+        if let Event::WindowEvent {
+            event: WindowEvent::CloseRequested,
+            ..
+        } = event
+        {
+            *control_flow = ControlFlow::Exit;
         }
-    };
+    });
+}
 
-    if auto_open {
-        open_browser_with_root(&url, &root_dir);
-    }
-
-    for mut req in server.incoming_requests() {
-        let state = Arc::clone(&state);
-        std::thread::spawn(move || {
-            let url = req.url().to_string();
-            let path_part = url.split('?').next().unwrap_or("/");
-            let params = parse_query_params(&url);
-
-            let resp = match (req.method(), path_part) {
-                (&Method::Get, "/api/overview") => handle_overview(&state),
-                (&Method::Get, "/api/search") => handle_search(&state, &params),
-                (&Method::Get, "/api/search/stream") | (&Method::Get, "/api/search/stream/") => {
-                    handle_search_stream(&state, &params, req);
-                    return;
-                },
-                (&Method::Post, "/api/search/cancel") => handle_search_cancel(&state),
-                (&Method::Get, "/api/segment") => handle_segment_detail(&state, &params),
-                (&Method::Get, "/api/source-jump") => handle_source_jump(&state, &params),
-                (&Method::Get, "/api/open-editor") | (&Method::Post, "/api/open-editor") => handle_open_editor(&params),
-                (&Method::Get, "/api/system/installed-browsers") => handle_installed_browsers(&state),
-                (&Method::Get, "/api/system/switch-browser") | (&Method::Post, "/api/system/switch-browser") => handle_switch_browser(&state, &params),
-                (&Method::Get, "/api/system/pick-folder") | (&Method::Post, "/api/system/pick-folder") => handle_pick_folder(&state),
-                (&Method::Get, "/api/document/delete") | (&Method::Post, "/api/document/delete") => handle_document_delete(&state, &params),
-                (&Method::Post, "/api/segment/edit") => handle_segment_edit(&state, &mut req),
-                (&Method::Post, "/api/build-db") | (&Method::Post, "/api/build_db") => handle_build_db(&state, &mut req),
-                (&Method::Get, "/api/build-db/status") | (&Method::Get, "/api/build_db/status") => handle_build_db_status(&state),
-                (&Method::Post, "/api/build-db/stop") | (&Method::Post, "/api/build_db/stop") => handle_build_db_stop(&state),
-                (&Method::Post, "/api/build-db/cancel") | (&Method::Post, "/api/build_db/cancel") => handle_build_db_cancel(&state),
-                (&Method::Get, "/api/export/mapping.tsv") => serve_static_file(
-                    &state.root_dir.join("db").join("corpus_db_mapping.tsv"),
-                    "text/tab-separated-values; charset=utf-8",
-                ),
-                (&Method::Get, "/api/export/mapping.json") => serve_static_file(
-                    &state.root_dir.join("db").join("corpus_db_mapping.json"),
-                    "application/json; charset=utf-8",
-                ),
-                (&Method::Get, "/fonts/HANBatang.ttf") => {
-                    serve_static_file(&state.hanbatang_path, "font/ttf")
-                }
-                (&Method::Get, "/fonts/KoPubWorldDotumMedium.ttf") => {
-                    serve_static_file(&state.kopub_ttf_path, "font/ttf")
-                }
-                (&Method::Get, "/fonts/KoPubWorldDotumProMedium.otf") => {
-                    serve_static_file(&state.kopub_otf_path, "font/otf")
-                }
-                (&Method::Get, "/") | (&Method::Get, "/index.html") => serve_static_or_embedded(
-                    &state.web_dir.join("index.html"),
-                    Some(EMBEDDED_INDEX_HTML),
-                    "text/html; charset=utf-8",
-                ),
-                (&Method::Get, "/styles.css") => serve_static_or_embedded(
-                    &state.web_dir.join("styles.css"),
-                    Some(EMBEDDED_STYLES_CSS),
-                    "text/css; charset=utf-8",
-                ),
-                (&Method::Get, "/hangul_automata.js") => serve_static_or_embedded(
-                    &state.web_dir.join("hangul_automata.js"),
-                    Some(EMBEDDED_HANGUL_AUTOMATA_JS),
-                    "application/javascript; charset=utf-8",
-                ),
-                (&Method::Get, "/app.js") => serve_static_or_embedded(
-                    &state.web_dir.join("app.js"),
-                    Some(EMBEDDED_APP_JS),
-                    "application/javascript; charset=utf-8",
-                ),
-                _ => Response::from_string("404 Not Found").with_status_code(StatusCode(404)),
-            };
-            let _ = req.respond(resp);
-        });
+fn dispatch_request(
+    state: &Arc<AppState>,
+    method: &http::Method,
+    path_part: &str,
+    query_url: &str,
+    body: &[u8],
+) -> ApiResponse {
+    let params = parse_query_params(query_url);
+    match (method, path_part) {
+        (&http::Method::GET, "/api/overview") => handle_overview(state),
+        (&http::Method::GET, "/api/search") => handle_search(state, &params),
+        (&http::Method::GET, "/api/search/stream") | (&http::Method::GET, "/api/search/stream/") => {
+            handle_search_stream(state, &params)
+        }
+        (&http::Method::POST, "/api/search/cancel") => handle_search_cancel(state),
+        (&http::Method::GET, "/api/segment") => handle_segment_detail(state, &params),
+        (&http::Method::GET, "/api/source-jump") => handle_source_jump(state, &params),
+        (&http::Method::GET, "/api/open-editor") | (&http::Method::POST, "/api/open-editor") => {
+            handle_open_editor(&params)
+        }
+        (&http::Method::GET, "/api/system/installed-browsers") => handle_installed_browsers(state),
+        (&http::Method::GET, "/api/system/switch-browser")
+        | (&http::Method::POST, "/api/system/switch-browser") => handle_switch_browser(state, &params),
+        (&http::Method::GET, "/api/system/pick-folder")
+        | (&http::Method::POST, "/api/system/pick-folder") => handle_pick_folder(state),
+        (&http::Method::GET, "/api/document/delete")
+        | (&http::Method::POST, "/api/document/delete") => handle_document_delete(state, &params),
+        (&http::Method::POST, "/api/segment/edit") => handle_segment_edit(state, body),
+        (&http::Method::POST, "/api/build-db") | (&http::Method::POST, "/api/build_db") => {
+            handle_build_db(state, body)
+        }
+        (&http::Method::GET, "/api/build-db/status")
+        | (&http::Method::GET, "/api/build_db/status") => handle_build_db_status(state),
+        (&http::Method::POST, "/api/build-db/stop")
+        | (&http::Method::POST, "/api/build_db/stop") => handle_build_db_stop(state),
+        (&http::Method::POST, "/api/build-db/cancel")
+        | (&http::Method::POST, "/api/build_db/cancel") => handle_build_db_cancel(state),
+        (&http::Method::GET, "/api/export/mapping.tsv") => serve_static_file(
+            &state.root_dir.join("db").join("corpus_db_mapping.tsv"),
+            "text/tab-separated-values; charset=utf-8",
+        ),
+        (&http::Method::GET, "/api/export/mapping.json") => serve_static_file(
+            &state.root_dir.join("db").join("corpus_db_mapping.json"),
+            "application/json; charset=utf-8",
+        ),
+        (&http::Method::GET, "/fonts/HANBatang.ttf") => {
+            serve_static_file(&state.hanbatang_path, "font/ttf")
+        }
+        (&http::Method::GET, "/fonts/KoPubWorldDotumMedium.ttf") => {
+            serve_static_file(&state.kopub_ttf_path, "font/ttf")
+        }
+        (&http::Method::GET, "/fonts/KoPubWorldDotumProMedium.otf") => {
+            serve_static_file(&state.kopub_otf_path, "font/otf")
+        }
+        (&http::Method::GET, "/") | (&http::Method::GET, "/index.html") => serve_static_or_embedded(
+            &state.web_dir.join("index.html"),
+            Some(EMBEDDED_INDEX_HTML),
+            "text/html; charset=utf-8",
+        ),
+        (&http::Method::GET, "/styles.css") => serve_static_or_embedded(
+            &state.web_dir.join("styles.css"),
+            Some(EMBEDDED_STYLES_CSS),
+            "text/css; charset=utf-8",
+        ),
+        (&http::Method::GET, "/hangul_automata.js") => serve_static_or_embedded(
+            &state.web_dir.join("hangul_automata.js"),
+            Some(EMBEDDED_HANGUL_AUTOMATA_JS),
+            "application/javascript; charset=utf-8",
+        ),
+        (&http::Method::GET, "/app.js") => serve_static_or_embedded(
+            &state.web_dir.join("app.js"),
+            Some(EMBEDDED_APP_JS),
+            "application/javascript; charset=utf-8",
+        ),
+        _ => binary_response(404, "text/plain; charset=utf-8", b"404 Not Found".to_vec()),
     }
 }
 

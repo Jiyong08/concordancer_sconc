@@ -1,4 +1,4 @@
-use crate::models::{json_response, AppState, SearchHit, SearchResponse};
+use crate::models::{binary_response, json_response, ApiResponse, AppState, SearchHit, SearchResponse};
 use crate::normalizer::{find_bracket_query_match, match_tokens_at, BracketQueryToken};
 use regex::Regex;
 use rusqlite::{params, Connection};
@@ -6,7 +6,6 @@ use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
-use tiny_http::{Header, Response, StatusCode};
 
 /// Extract KWIC Left Context, Node, and Right Context by Eojeol (word) count!
 /// Default `context_words` is 5 (좌우 5어절).
@@ -253,7 +252,7 @@ pub(crate) fn is_choseong_only_query(q_norm: &[char]) -> bool {
         })
 }
 
-pub(crate) fn handle_search_cancel(state: &AppState) -> Response<std::io::Cursor<Vec<u8>>> {
+pub(crate) fn handle_search_cancel(state: &AppState) -> ApiResponse {
     let cur = state.latest_search_seq.load(Ordering::Relaxed);
     state.cancel_search_seq.store(cur, Ordering::Relaxed);
     json_response(&serde_json::json!({ "ok": true, "cancelled_seq": cur }), 200)
@@ -1144,7 +1143,7 @@ pub(crate) fn evaluate_cross_sentence_match(
 pub(crate) fn handle_search(
     state: &AppState,
     params: &HashMap<String, String>,
-) -> Response<std::io::Cursor<Vec<u8>>> {
+) -> ApiResponse {
     let t0 = Instant::now();
     let my_search_seq = state.latest_search_seq.fetch_add(1, Ordering::Relaxed) + 1;
 
@@ -1759,39 +1758,10 @@ pub(crate) fn handle_search(
 }
 
 
-pub(crate) struct ChannelReader {
-    pub(crate) rx: std::sync::mpsc::Receiver<Vec<u8>>,
-    pub(crate) current: std::io::Cursor<Vec<u8>>,
-}
-
-impl std::io::Read for ChannelReader {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        loop {
-            let n = self.current.read(buf)?;
-            if n > 0 {
-                return Ok(n);
-            }
-            match self.rx.recv() {
-                Ok(chunk) => {
-                    if chunk.is_empty() {
-                        return Ok(0);
-                    }
-                    self.current = std::io::Cursor::new(chunk);
-                }
-                Err(_) => {
-                    return Ok(0);
-                }
-            }
-        }
-    }
-}
-
-
 pub(crate) fn handle_search_stream(
     state: &Arc<AppState>,
     params: &HashMap<String, String>,
-    req: tiny_http::Request,
-) {
+) -> ApiResponse {
     let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(128);
     let state_worker = Arc::clone(state);
     let params_worker = params.clone();
@@ -2390,17 +2360,13 @@ pub(crate) fn handle_search_stream(
         let _ = tx.send(format!("{}\n", done_msg).into_bytes());
     });
 
-    let reader = ChannelReader {
-        rx,
-        current: std::io::Cursor::new(Vec::new()),
-    };
-    let headers = vec![
-        Header::from_bytes(&b"Content-Type"[..], &b"application/x-ndjson; charset=utf-8"[..]).unwrap(),
-        Header::from_bytes(&b"Cache-Control"[..], &b"no-cache, no-transform"[..]).unwrap(),
-        Header::from_bytes(&b"Connection"[..], &b"keep-alive"[..]).unwrap(),
-        Header::from_bytes(&b"Access-Control-Allow-Origin"[..], &b"*"[..]).unwrap(),
-    ];
-    let resp = Response::new(StatusCode(200), headers, reader, None, None);
-    let _ = req.respond(resp);
+    let mut out = Vec::new();
+    while let Ok(chunk) = rx.recv() {
+        if chunk.is_empty() {
+            break;
+        }
+        out.extend_from_slice(&chunk);
+    }
+    binary_response(200, "application/x-ndjson; charset=utf-8", out)
 }
 

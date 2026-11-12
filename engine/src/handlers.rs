@@ -1,6 +1,6 @@
 use crate::builder;
 use crate::models::{
-    json_response, AppState, DbBuildProgress, DocumentInfo, EditHistoryItem, EditSegmentRequest,
+    json_response, ApiResponse, AppState, DbBuildProgress, DocumentInfo, EditHistoryItem, EditSegmentRequest,
     NeighborSentence,
     OverviewResponse, SegmentDetailResponse, SourceFileInfo,
 };
@@ -11,9 +11,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
-use tiny_http::{Request, Response};
 
-pub(crate) fn handle_overview(state: &AppState) -> Response<std::io::Cursor<Vec<u8>>> {
+pub(crate) fn handle_overview(state: &AppState) -> ApiResponse {
     let conn = match Connection::open(&state.db_path) {
         Ok(c) => c,
         Err(e) => return json_response(&serde_json::json!({ "error": e.to_string() }), 500),
@@ -100,7 +99,7 @@ pub(crate) fn handle_overview(state: &AppState) -> Response<std::io::Cursor<Vec<
 pub(crate) fn handle_segment_detail(
     state: &AppState,
     params: &HashMap<String, String>,
-) -> Response<std::io::Cursor<Vec<u8>>> {
+) -> ApiResponse {
     let seg_id: i64 = match params.get("id").and_then(|s| s.parse().ok()) {
         Some(id) => id,
         None => return json_response(&serde_json::json!({ "error": "Missing id parameter" }), 400),
@@ -253,7 +252,7 @@ pub(crate) fn handle_segment_detail(
 pub(crate) fn handle_document_delete(
     state: &AppState,
     params: &HashMap<String, String>,
-) -> Response<std::io::Cursor<Vec<u8>>> {
+) -> ApiResponse {
     let doc_ids_raw = params.get("doc_ids").or_else(|| params.get("doc_id")).map(|s| s.as_str()).unwrap_or("");
     let doc_ids: Vec<&str> = doc_ids_raw.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
     if doc_ids.is_empty() {
@@ -302,13 +301,9 @@ pub(crate) fn handle_document_delete(
 
 pub(crate) fn handle_segment_edit(
     state: &AppState,
-    req: &mut Request,
-) -> Response<std::io::Cursor<Vec<u8>>> {
-    let mut body = String::new();
-    if let Err(e) = req.as_reader().read_to_string(&mut body) {
-        return json_response(&serde_json::json!({ "error": e.to_string() }), 400);
-    }
-    let payload: EditSegmentRequest = match serde_json::from_str(&body) {
+    body: &[u8],
+) -> ApiResponse {
+    let payload: EditSegmentRequest = match serde_json::from_slice(body) {
         Ok(p) => p,
         Err(e) => return json_response(&serde_json::json!({ "error": e.to_string() }), 400),
     };
@@ -407,13 +402,9 @@ pub(crate) struct BuildDbRequest {
 
 pub(crate) fn handle_build_db(
     state: &AppState,
-    req: &mut Request,
-) -> Response<std::io::Cursor<Vec<u8>>> {
-    let mut body = String::new();
-    if let Err(e) = req.as_reader().read_to_string(&mut body) {
-        return json_response(&serde_json::json!({ "error": e.to_string() }), 400);
-    }
-    let payload: BuildDbRequest = match serde_json::from_str(&body) {
+    body: &[u8],
+) -> ApiResponse {
+    let payload: BuildDbRequest = match serde_json::from_slice(body) {
         Ok(p) => p,
         Err(e) => return json_response(&serde_json::json!({ "error": e.to_string() }), 400),
     };
@@ -496,7 +487,7 @@ pub(crate) fn handle_build_db(
     json_response(&initial_prog, 200)
 }
 
-pub(crate) fn handle_pick_folder(state: &AppState) -> Response<std::io::Cursor<Vec<u8>>> {
+pub(crate) fn handle_pick_folder(state: &AppState) -> ApiResponse {
     #[cfg(target_os = "windows")]
     {
         let initial_dir = state.root_dir.to_string_lossy().replace('\'', "''");
@@ -528,12 +519,12 @@ pub(crate) fn handle_pick_folder(state: &AppState) -> Response<std::io::Cursor<V
     }
 }
 
-pub(crate) fn handle_build_db_status(state: &AppState) -> Response<std::io::Cursor<Vec<u8>>> {
+pub(crate) fn handle_build_db_status(state: &AppState) -> ApiResponse {
     let mgr = state.db_builder.lock().unwrap();
     json_response(&mgr.progress, 200)
 }
 
-pub(crate) fn handle_build_db_stop(state: &AppState) -> Response<std::io::Cursor<Vec<u8>>> {
+pub(crate) fn handle_build_db_stop(state: &AppState) -> ApiResponse {
     let mut mgr = state.db_builder.lock().unwrap();
     if !mgr.progress.is_running {
         return json_response(&serde_json::json!({ "success": false, "message": "현재 실행 중인 DB 생성 작업이 없습니다." }), 200);
@@ -548,7 +539,7 @@ pub(crate) fn handle_build_db_stop(state: &AppState) -> Response<std::io::Cursor
     json_response(&serde_json::json!({ "success": true, "status": "STOPPED", "message": "DB 생성이 중단되었습니다." }), 200)
 }
 
-pub(crate) fn handle_build_db_cancel(state: &AppState) -> Response<std::io::Cursor<Vec<u8>>> {
+pub(crate) fn handle_build_db_cancel(state: &AppState) -> ApiResponse {
     let mut mgr = state.db_builder.lock().unwrap();
     if let Some(mut ch) = mgr.child.take() {
         let _ = ch.kill();

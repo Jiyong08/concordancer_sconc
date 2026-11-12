@@ -7,7 +7,8 @@ use std::process::Child;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 use sysinfo::System;
-use tiny_http::{Header, Response, StatusCode};
+
+pub(crate) type ApiResponse = http::Response<Vec<u8>>;
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct MemoryProfile {
@@ -306,6 +307,7 @@ pub(crate) struct AppState {
     pub(crate) latest_search_seq: AtomicU64,
     pub(crate) cancel_search_seq: AtomicU64,
     pub(crate) db_builder: Arc<Mutex<DbBuildManager>>,
+    #[allow(dead_code)]
     pub(crate) port: u16,
 }
 
@@ -330,14 +332,17 @@ pub(crate) fn parse_query_params(url: &str) -> HashMap<String, String> {
     params
 }
 
-pub(crate) fn json_response<T: Serialize>(data: &T, status: u16) -> Response<std::io::Cursor<Vec<u8>>> {
+pub(crate) fn binary_response(status: u16, content_type: &str, body: Vec<u8>) -> ApiResponse {
+    http::Response::builder()
+        .status(status)
+        .header("Content-Type", content_type)
+        .header("Access-Control-Allow-Origin", "*")
+        .body(body)
+        .unwrap_or_else(|_| http::Response::new(Vec::new()))
+}
+
+pub(crate) fn json_response<T: Serialize>(data: &T, status: u16) -> ApiResponse {
     let body = serde_json::to_vec(data).unwrap_or_else(|_| b"{}".to_vec());
-    let header =
-        Header::from_bytes(&b"Content-Type"[..], &b"application/json; charset=utf-8"[..]).unwrap();
-    let cors = Header::from_bytes(&b"Access-Control-Allow-Origin"[..], &b"*"[..]).unwrap();
-    Response::from_data(body)
-        .with_status_code(StatusCode(status))
-        .with_header(header)
-        .with_header(cors)
+    binary_response(status, "application/json; charset=utf-8", body)
 }
 
