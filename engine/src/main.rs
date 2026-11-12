@@ -35,8 +35,6 @@ const EMBEDDED_APP_JS: &[u8] = include_bytes!("../../web/app.js");
 
 
 use rusqlite::Connection;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -99,176 +97,6 @@ fn find_root_dir() -> PathBuf {
         }
     }
     cwd
-}
-
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-struct BrowserInfo {
-    id: String,
-    name: String,
-    path: String,
-    installed: bool,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-struct SconcConfig {
-    #[serde(default = "default_system_browser")]
-    default_browser: String,
-    #[serde(default)]
-    browser_path: String,
-}
-
-fn default_system_browser() -> String {
-    "system".to_string()
-}
-
-fn get_sconc_config_path(root_dir: &Path) -> PathBuf {
-    root_dir.join("sconc_config.json")
-}
-
-fn load_sconc_config(root_dir: &Path) -> SconcConfig {
-    let p = get_sconc_config_path(root_dir);
-    if let Ok(content) = fs::read_to_string(&p) {
-        if let Ok(cfg) = serde_json::from_str::<SconcConfig>(&content) {
-            return cfg;
-        }
-    }
-    SconcConfig {
-        default_browser: "system".to_string(),
-        browser_path: "".to_string(),
-    }
-}
-
-fn save_sconc_config(root_dir: &Path, cfg: &SconcConfig) {
-    let p = get_sconc_config_path(root_dir);
-    if let Ok(content) = serde_json::to_string_pretty(cfg) {
-        let _ = fs::write(p, content);
-    }
-}
-
-fn detect_installed_browsers() -> Vec<BrowserInfo> {
-    let mut list = Vec::new();
-
-    #[cfg(target_os = "windows")]
-    {
-        let local_appdata = env::var("LOCALAPPDATA").unwrap_or_default();
-        let program_files = env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".to_string());
-        let program_files_x86 = env::var("ProgramFiles(x86)").unwrap_or_else(|_| "C:\\Program Files (x86)".to_string());
-        let user_profile = env::var("USERPROFILE").unwrap_or_default();
-
-        let candidates = [
-            (
-                "msedge",
-                "Microsoft Edge (독립 앱 창 모드 권장)",
-                vec![
-                    format!("{PF86}\\Microsoft\\Edge\\Application\\msedge.exe", PF86=program_files_x86),
-                    format!("{PF}\\Microsoft\\Edge\\Application\\msedge.exe", PF=program_files),
-                    format!("{LocalAppdata}\\Microsoft\\Edge\\Application\\msedge.exe", LocalAppdata=local_appdata),
-                    format!("{UP}\\AppData\\Local\\Microsoft\\Edge\\Application\\msedge.exe", UP=user_profile),
-                ],
-            ),
-            (
-                "chrome",
-                "Google Chrome (독립 앱 창 모드 지원)",
-                vec![
-                    format!("{PF}\\Google\\Chrome\\Application\\chrome.exe", PF=program_files),
-                    format!("{PF86}\\Google\\Chrome\\Application\\chrome.exe", PF86=program_files_x86),
-                    format!("{LocalAppdata}\\Google\\Chrome\\Application\\chrome.exe", LocalAppdata=local_appdata),
-                    format!("{UP}\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe", UP=user_profile),
-                ],
-            ),
-            (
-                "whale",
-                "Naver Whale (네이버 웨일)",
-                vec![
-                    format!("{PF}\\Naver\\Naver Whale\\Application\\whale.exe", PF=program_files),
-                    format!("{PF86}\\Naver\\Naver Whale\\Application\\whale.exe", PF86=program_files_x86),
-                    format!("{LocalAppdata}\\Naver\\Naver Whale\\Application\\whale.exe", LocalAppdata=local_appdata),
-                    format!("{UP}\\AppData\\Local\\Naver\\Naver Whale\\Application\\whale.exe", UP=user_profile),
-                ],
-            ),
-            (
-                "firefox",
-                "Mozilla Firefox",
-                vec![
-                    format!("{PF}\\Mozilla Firefox\\firefox.exe", PF=program_files),
-                    format!("{PF86}\\Mozilla Firefox\\firefox.exe", PF86=program_files_x86),
-                ],
-            ),
-            (
-                "brave",
-                "Brave Browser",
-                vec![
-                    format!("{PF}\\BraveSoftware\\Brave-Browser\\Application\\brave.exe", PF=program_files),
-                    format!("{LocalAppdata}\\BraveSoftware\\Brave-Browser\\Application\\brave.exe", LocalAppdata=local_appdata),
-                ],
-            ),
-        ];
-
-        for (id, name, path_candidates) in candidates {
-            let mut found_path = "".to_string();
-            let mut is_installed = false;
-            for p in path_candidates {
-                if Path::new(&p).exists() {
-                    found_path = p;
-                    is_installed = true;
-                    break;
-                }
-            }
-            list.push(BrowserInfo {
-                id: id.to_string(),
-                name: name.to_string(),
-                path: found_path,
-                installed: is_installed,
-            });
-        }
-    }
-
-    // Windows 시스템 기본 브라우저 옵션 (항상 사용 가능)
-    list.push(BrowserInfo {
-        id: "system".to_string(),
-        name: "Windows 시스템 기본 브라우저".to_string(),
-        path: "".to_string(),
-        installed: true,
-    });
-
-    list
-}
-
-fn handle_installed_browsers(state: &AppState) -> ApiResponse {
-    let browsers = detect_installed_browsers();
-    let cfg = load_sconc_config(&state.root_dir);
-
-    let json = serde_json::json!({
-        "status": "ok",
-        "current_browser": cfg.default_browser,
-        "current_path": cfg.browser_path,
-        "browsers": browsers
-    });
-    models::json_response(&json, 200)
-}
-
-fn handle_switch_browser(state: &AppState, params: &HashMap<String, String>) -> ApiResponse {
-    let browser_id = params.get("browser_id").map(|s| s.as_str()).unwrap_or("system");
-    let browser_path = params.get("browser_path").map(|s| s.as_str()).unwrap_or("");
-    let set_default = params.get("set_default").map(|s| s == "1" || s == "true").unwrap_or(true);
-
-    if set_default {
-        let cfg = SconcConfig {
-            default_browser: browser_id.to_string(),
-            browser_path: browser_path.to_string(),
-        };
-        save_sconc_config(&state.root_dir, &cfg);
-    }
-
-    let json = serde_json::json!({
-        "status": "ok",
-        "message": format!("설정이 저장되었습니다. (현재 순수 네이티브 창 모드로 실행 중)"),
-        "browser_id": browser_id,
-        "browser_path": browser_path,
-        "set_default": set_default
-    });
-    models::json_response(&json, 200)
 }
 
 
@@ -475,9 +303,6 @@ fn dispatch_request(
         (&http::Method::GET, "/api/open-editor") | (&http::Method::POST, "/api/open-editor") => {
             handle_open_editor(&params)
         }
-        (&http::Method::GET, "/api/system/installed-browsers") => handle_installed_browsers(state),
-        (&http::Method::GET, "/api/system/switch-browser")
-        | (&http::Method::POST, "/api/system/switch-browser") => handle_switch_browser(state, &params),
         (&http::Method::GET, "/api/system/pick-folder")
         | (&http::Method::POST, "/api/system/pick-folder") => handle_pick_folder(state),
         (&http::Method::GET, "/api/document/delete")
