@@ -32,6 +32,7 @@ const EMBEDDED_INDEX_HTML: &[u8] = include_bytes!("../../web/index.html");
 const EMBEDDED_STYLES_CSS: &[u8] = include_bytes!("../../web/styles.css");
 const EMBEDDED_HANGUL_AUTOMATA_JS: &[u8] = include_bytes!("../../web/hangul_automata.js");
 const EMBEDDED_APP_JS: &[u8] = include_bytes!("../../web/app.js");
+const EMBEDDED_ICON_RGBA: &[u8] = include_bytes!("../../assets/icon_64.rgba");
 
 
 use rusqlite::Connection;
@@ -239,9 +240,11 @@ fn main() {
 
     let _ = auto_open;
     let event_loop = EventLoop::new();
+    let window_icon = tao::window::Icon::from_rgba(EMBEDDED_ICON_RGBA.to_vec(), 64, 64).ok();
     let window = WindowBuilder::new()
         .with_title("Concordance (sconc) — 한국어 통시·공시 다층 말뭉치 통합 검색기")
         .with_inner_size(LogicalSize::new(1480.0, 920.0))
+        .with_window_icon(window_icon)
         .build(&event_loop)
         .expect("Failed to create native window");
 

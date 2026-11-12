@@ -16,6 +16,9 @@ tao = "0.37"
 wry = "0.57"
 http = "1"
 
+[build-dependencies]
+winresource = "0.1"
+
 [[bin]]
 name = "sconc"
 path = "src/main.rs"
