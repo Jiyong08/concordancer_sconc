@@ -963,6 +963,18 @@ mod tests {
             seg.morph_flat
         );
 
+        let (speaker_info, other_meta) = builder::extract_corpus_metadata_from_file(&xml_path);
+        assert!(
+            speaker_info.contains("국적: 중국") && speaker_info.contains("등급: 1급"),
+            "speaker_info should contain nationality/grade, got: {}",
+            speaker_info
+        );
+        assert!(
+            other_meta.contains("주제: 집 구하기") && other_meta.contains("제목: 한국어 학습자 말뭉치"),
+            "other_meta should contain theme/title, got: {}",
+            other_meta
+        );
+
         let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 }

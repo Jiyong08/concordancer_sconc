@@ -109,6 +109,8 @@ pub(crate) struct DocumentInfo {
     pub(crate) sentence_count: i64,
     pub(crate) eojeol_count: i64,
     pub(crate) created_at: String,
+    pub(crate) speaker_info: String,
+    pub(crate) other_meta: String,
 }
 
 #[derive(Debug, Serialize)]

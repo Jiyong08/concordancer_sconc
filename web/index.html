@@ -79,6 +79,15 @@
               </button>
             </div>
 
+            <!-- 1-1. 사용자말뭉치 (문서 목록에서 묶어 저장한 말뭉치 빠른 선택) -->
+            <div class="opt-pill" id="opt-user-corpus-pill">
+              <label for="select-user-corpus">사용자말뭉치</label>
+              <select id="select-user-corpus" title="구축 데이터베이스 문서 목록이나 문서지정 창에서 저장한 사용자말뭉치 묶음을 선택하여 해당 말뭉치에서만 검색합니다.">
+                <option value="">(전체 문서 / 미지정)</option>
+              </select>
+              <button type="button" class="btn-unit-default" id="btn-delete-active-user-corpus" title="현재 선택한 사용자말뭉치 묶음을 삭제합니다." style="color:#dc2626; border-color:#fca5a5;">✕</button>
+            </div>
+
             <!-- 1-2. 검색단위 (어절 단위 / 문장 단위 / 텍스트 단위 + 사용자 디폴트 지정) -->
             <div class="opt-pill" id="opt-search-unit-pill">
               <label for="select-search-unit">검색단위</label>
@@ -423,7 +432,13 @@
                 특정 말뭉치를 DB에서 선택하여 삭제하거나, 연동된 원문 코퍼스를 바탕으로 언제든 다시 데이터베이스로 재구축할 수 있습니다.
               </div>
             </div>
-            <div style="display:flex; gap:8px; align-items:center;">
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <button type="button" class="btn btn-primary" id="btn-save-docs-to-user-bundle" style="padding:5px 12px; font-size:0.8rem; font-weight:700; background:#2563eb; border-color:#2563eb;">
+                📚 선택한 말뭉치 → 사용자말뭉치 저장
+              </button>
+              <button type="button" class="btn btn-outline" id="btn-search-selected-docs" style="border-color:#059669; color:#047857; padding:5px 12px; font-size:0.8rem; font-weight:700;">
+                🔍 선택한 말뭉치에서 검색
+              </button>
               <button type="button" class="btn btn-outline" id="btn-delete-selected-docs" style="border-color:#ef4444; color:#dc2626; padding:5px 12px; font-size:0.8rem; font-weight:700;">
                 🗑️ 선택한 말뭉치 일괄 삭제
               </button>
@@ -436,6 +451,8 @@
                   <th style="width:36px; text-align:center;"><input type="checkbox" id="chk-doc-table-all" title="전체 선택/해제" /></th>
                   <th>DB 문서 ID (`doc_id`)</th>
                   <th>문서 제목</th>
+                  <th>화자 정보</th>
+                  <th>기타 정보</th>
                   <th>말뭉치 분류</th>
                   <th>포함 주석 층위</th>
                   <th>연동된 원본 파일</th>
@@ -952,7 +969,22 @@
       </div>
     </div>
   </div>
-  <script src="/hangul_automata.js?v=8"></script>
+  <!-- MODAL: DOCUMENT METADATA DETAIL (화자 정보 / 기타 정보 전체 보기) -->
+  <div class="modal-backdrop" id="modal-doc-meta" style="display: none;">
+    <div class="modal-dialog" style="max-width: 680px;">
+      <div class="modal-header">
+        <h3 class="modal-title" id="modal-doc-meta-title">📋 말뭉치 메타데이터 전체 정보</h3>
+        <button type="button" class="modal-close" id="btn-close-doc-meta">✕</button>
+      </div>
+      <div class="modal-body" id="modal-doc-meta-body" style="max-height: 65vh; overflow-y: auto; padding: 16px;">
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-primary" id="btn-ok-doc-meta">닫기</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/hangul_automata.js"></script>
   <script src="/app.js?v=8"></script>
 </body>
 </html>

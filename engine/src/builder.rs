@@ -120,6 +120,171 @@ pub struct DocumentRecord {
     pub source_files_list: String,
     pub sentence_count: usize,
     pub eojeol_count: usize,
+    pub speaker_info: String,
+    pub other_meta: String,
+}
+
+/// 말뭉치 파일 상단 헤더(<Header>, <teiHeader>, JSON metadata)에서 화자 정보와 기타 메타데이터를 분리 추출
+pub fn extract_corpus_metadata_from_file(filepath: &Path) -> (String, String) {
+    let Ok(mut f) = fs::File::open(filepath) else {
+        return (String::new(), String::new());
+    };
+    let mut buf = vec![0u8; 65536];
+    let n = std::io::Read::read(&mut f, &mut buf).unwrap_or(0);
+    if n == 0 {
+        return (String::new(), String::new());
+    }
+    buf.truncate(n);
+    let head = decode_bytes_auto(&buf).0;
+    extract_corpus_metadata_from_text(&head)
+}
+
+pub fn extract_corpus_metadata_from_text(text: &str) -> (String, String) {
+    let mut speaker_parts: Vec<String> = Vec::new();
+    let mut other_parts: Vec<String> = Vec::new();
+
+    // 1) XML <Header> or <teiHeader>
+    let re_hdr = Regex::new(r"(?is)<(?:Header|teiHeader)\b[^>]*>(.*?)</(?:Header|teiHeader)>").unwrap();
+    if let Some(cap) = re_hdr.captures(text) {
+        let hdr_body = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+        let re_leaf = Regex::new(r"(?is)<([A-Za-z0-9_:-]+)\b[^>]*>([^<]+)</([A-Za-z0-9_:-]+)>").unwrap();
+        for lcap in re_leaf.captures_iter(hdr_body) {
+            let tag = lcap.get(1).map(|m| m.as_str()).unwrap_or("");
+            let end_tag = lcap.get(3).map(|m| m.as_str()).unwrap_or("");
+            if !tag.eq_ignore_ascii_case(end_tag) {
+                continue;
+            }
+            let val = lcap.get(2).map(|m| m.as_str().trim()).unwrap_or("");
+            if val.is_empty() {
+                continue;
+            }
+            let low = tag.to_lowercase();
+            let (is_speaker, label) = match low.as_str() {
+                "agegroup" | "age" => (true, "연령"),
+                "nationality" => (true, "국적"),
+                "gender" | "sex" => (true, "성별"),
+                "motherlanguage" | "nativelanguage" => (true, "모어"),
+                "datagrade" | "grade" => (true, "등급"),
+                "learnertype" => (true, "화자유형"),
+                "learnertypedetail" => (true, "세부유형"),
+                "learningpurpose" => (true, "학습목적"),
+                "occupation" => (true, "직업"),
+                "birthplace" => (true, "출생지"),
+                "sampleseq" => (false, "일련번호"),
+                "learningenvironment" => (false, "학습환경"),
+                "sourcetype" => (false, "매체"),
+                "assignmenttype" => (false, "과제유형"),
+                "assignmentgenre" => (false, "장르"),
+                "assignmenttheme" => (false, "주제"),
+                "sentencecount" => (false, "원본문장수"),
+                "wordcount" => (false, "원본어절수"),
+                "title" => (false, "제목"),
+                "author" => (false, "저자"),
+                "date" | "pubdate" => (false, "작성일"),
+                "publisher" => (false, "발행처"),
+                _ => (false, tag),
+            };
+            let entry = format!("{}: {}", label, val);
+            if is_speaker {
+                if !speaker_parts.contains(&entry) {
+                    speaker_parts.push(entry);
+                }
+            } else if !other_parts.contains(&entry) {
+                other_parts.push(entry);
+            }
+        }
+
+        // <person age="..." sex="..." ...> 속성도 추출
+        let re_person = Regex::new(r#"(?is)<person\b([^>]*)>"#).unwrap();
+        let re_attr = Regex::new(r#"([A-Za-z0-9_:-]+)=["']([^"']+)["']"#).unwrap();
+        for pcap in re_person.captures_iter(hdr_body) {
+            let attrs = pcap.get(1).map(|m| m.as_str()).unwrap_or("");
+            for acap in re_attr.captures_iter(attrs) {
+                let k = acap.get(1).map(|m| m.as_str()).unwrap_or("");
+                let v = acap.get(2).map(|m| m.as_str().trim()).unwrap_or("");
+                if v.is_empty() || k.eq_ignore_ascii_case("id") || k.eq_ignore_ascii_case("xml:id") {
+                    continue;
+                }
+                let label = match k.to_lowercase().as_str() {
+                    "age" => "연령",
+                    "sex" | "gender" => "성별",
+                    "occupation" => "직업",
+                    "role" => "역할",
+                    _ => k,
+                };
+                let entry = format!("{}: {}", label, v);
+                if !speaker_parts.contains(&entry) {
+                    speaker_parts.push(entry);
+                }
+            }
+        }
+    }
+
+    // 2) JSON metadata (모두의 말뭉치 등)
+    if speaker_parts.is_empty() && other_parts.is_empty() && text.trim_start().starts_with('{') {
+        if let Ok(val) = serde_json::from_str::<Value>(text) {
+            if let Some(meta) = val.get("metadata").and_then(|m| m.as_object()) {
+                for (k, v) in meta {
+                    if k == "speaker" || k == "person" {
+                        if let Some(arr) = v.as_array() {
+                            for sp in arr {
+                                if let Some(obj) = sp.as_object() {
+                                    for (sk, sv) in obj {
+                                        let s_str = sv.as_str().map(|x| x.to_string()).unwrap_or_else(|| sv.to_string());
+                                        let label = match sk.as_str() {
+                                            "age" => "연령",
+                                            "sex" => "성별",
+                                            "occupation" => "직업",
+                                            "birthplace" => "출생지",
+                                            _ => sk.as_str(),
+                                        };
+                                        let entry = format!("{}: {}", label, s_str.trim_matches('"'));
+                                        if !speaker_parts.contains(&entry) {
+                                            speaker_parts.push(entry);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else if let Some(s_val) = v.as_str() {
+                        if !s_val.trim().is_empty() {
+                            let label = match k.as_str() {
+                                "title" => "제목",
+                                "author" => "저자",
+                                "publisher" => "발행처",
+                                "date" => "작성일",
+                                "topic" => "주제",
+                                "setting" => "배경",
+                                _ => k.as_str(),
+                            };
+                            other_parts.push(format!("{}: {}", label, s_val.trim()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    (speaker_parts.join(" | "), other_parts.join(" | "))
+}
+
+fn decode_bytes_auto(raw: &[u8]) -> (String, String) {
+    if raw.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        return (String::from_utf8_lossy(&raw[3..]).into_owned(), "UTF-8-BOM".to_string());
+    }
+    if raw.starts_with(&[0xFF, 0xFE]) {
+        let u16s: Vec<u16> = raw[2..].chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        return (String::from_utf16_lossy(&u16s), "UTF-16LE".to_string());
+    }
+    if raw.starts_with(&[0xFE, 0xFF]) {
+        let u16s: Vec<u16> = raw[2..].chunks_exact(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
+        return (String::from_utf16_lossy(&u16s), "UTF-16BE".to_string());
+    }
+    if let Ok(s) = std::str::from_utf8(raw) {
+        return (s.to_string(), "UTF-8".to_string());
+    }
+    let s = String::from_utf8_lossy(raw).into_owned();
+    (s, "UTF-8-LOSSY".to_string())
 }
 
 /// 파일 인코딩 자동 감지 및 디코딩 (UTF-8, UTF-8-SIG, UTF-16LE/BE, CP949/EUC-KR)
@@ -1473,7 +1638,9 @@ pub fn init_db_schema(conn: &Connection) -> Result<(), String> {
             storage_mode TEXT NOT NULL DEFAULT 'ARCHIVED',
             sentence_count INTEGER NOT NULL DEFAULT 0,
             eojeol_count INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            speaker_info TEXT DEFAULT '',
+            other_meta TEXT DEFAULT ''
         );
 
         CREATE TABLE IF NOT EXISTS source_files (
@@ -1530,6 +1697,8 @@ pub fn init_db_schema(conn: &Connection) -> Result<(), String> {
         ",
     )
     .map_err(|e| format!("DB 스키마 초기화 실패: {}", e))?;
+    let _ = conn.execute("ALTER TABLE documents ADD COLUMN speaker_info TEXT DEFAULT ''", []);
+    let _ = conn.execute("ALTER TABLE documents ADD COLUMN other_meta TEXT DEFAULT ''", []);
 
     Ok(())
 }
@@ -1683,8 +1852,9 @@ pub fn build_folder_into_db_native(
         tx.execute(
             "INSERT INTO documents (
                 doc_id, title, author, pub_year, corpus_category, annotation_layers,
-                source_files_list, storage_mode, sentence_count, eojeol_count, created_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'ARCHIVED', ?8, ?9, ?10)",
+                source_files_list, storage_mode, sentence_count, eojeol_count, created_at,
+                speaker_info, other_meta
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'ARCHIVED', ?8, ?9, ?10, ?11, ?12)",
             params![
                 doc.doc_id,
                 doc.title,
@@ -1695,7 +1865,9 @@ pub fn build_folder_into_db_native(
                 doc.source_files_list,
                 doc.sentence_count as i64,
                 doc.eojeol_count as i64,
-                now_str
+                now_str,
+                doc.speaker_info,
+                doc.other_meta
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -1882,6 +2054,8 @@ pub fn build_folder_into_db_native(
                 source_files_list: format!("{}, {}, {}", bt_name, bs_name, bg_name),
                 sentence_count: segs.len(),
                 eojeol_count: ej_sum,
+                speaker_info: String::new(),
+                other_meta: "기관: 국립국어원 | 연도: 1993 | 유형: 21세기 세종계획 3중 연동".to_string(),
             };
 
             if save_doc_to_db(&mut conn, &doc, &sfiles, &segs).is_ok() {
@@ -2022,6 +2196,8 @@ pub fn build_folder_into_db_native(
                 source_files_list: format!("{}, {}", tf_name, xf_name),
                 sentence_count: segs.len(),
                 eojeol_count: ej_sum,
+                speaker_info: extract_corpus_metadata_from_file(&xf).0,
+                other_meta: extract_corpus_metadata_from_file(&xf).1,
             };
 
             if save_doc_to_db(&mut conn, &doc, &sfiles, &segs).is_ok() {
@@ -2272,6 +2448,7 @@ pub fn build_folder_into_db_native(
             continue;
         }
 
+        let (meta_sp, meta_ot) = extract_corpus_metadata_from_file(f);
         let ej_sum: usize = segs.iter().map(|s| s.eojeol_cnt).sum();
         let sf = SourceFileRecord {
             file_name: fname.clone(),
@@ -2299,6 +2476,8 @@ pub fn build_folder_into_db_native(
             source_files_list: fname.clone(),
             sentence_count: segs.len(),
             eojeol_count: ej_sum,
+            speaker_info: meta_sp,
+            other_meta: meta_ot,
         };
 
         match save_doc_to_db(&mut conn, &doc, &[sf], &segs) {

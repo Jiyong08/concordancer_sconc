@@ -581,6 +581,16 @@ let isSearchInProgress = false;
           </td>
           <td><code><strong>${escapeHtml(d.doc_id)}</strong></code></td>
           <td style="font-weight:700;">${escapeHtml(d.title)}</td>
+          <td>${
+            d.speaker_info
+              ? `<div class="meta-cell-preview btn-view-doc-meta" data-doc="${escapeHtml(d.doc_id)}" title="클릭하여 전체 보기&#10;[화자 정보] ${escapeHtml(d.speaker_info)}">${escapeHtml(d.speaker_info)}</div>`
+              : '<span class="meta-cell-empty">-</span>'
+          }</td>
+          <td>${
+            d.other_meta
+              ? `<div class="meta-cell-preview btn-view-doc-meta" data-doc="${escapeHtml(d.doc_id)}" title="클릭하여 전체 보기&#10;[기타 정보] ${escapeHtml(d.other_meta)}">${escapeHtml(d.other_meta)}</div>`
+              : '<span class="meta-cell-empty">-</span>'
+          }</td>
           <td>${escapeHtml(d.corpus_category)}</td>
           <td><span class="layer-badge badge-syntax">${escapeHtml(d.annotation_layers)}</span></td>
           <td><code>${escapeHtml(d.source_files_list)}</code></td>
@@ -603,6 +613,15 @@ let isSearchInProgress = false;
       `
         )
         .join('');
+
+      // 메타데이터 셀 클릭 시 전체 화자 정보 / 기타 정보 모달 열기
+      docsTbody.querySelectorAll('.btn-view-doc-meta').forEach((el) => {
+        el.addEventListener('click', () => {
+          const docId = el.dataset.doc;
+          const doc = globalDocuments.find((x) => x.doc_id === docId);
+          if (doc) openDocMetaModal(doc);
+        });
+      });
 
       // 이 문서 열람 버튼 이벤트
       docsTbody.querySelectorAll('.btn-browse-doc').forEach((b) => {
@@ -2913,6 +2932,8 @@ let isSearchInProgress = false;
   function updateSelectedDocsDeleteBtnCount() {
     const checkedBoxes = document.querySelectorAll('.chk-doc-row:checked');
     const btnDeleteSelected = document.getElementById('btn-delete-selected-docs');
+    const btnSaveBundle = document.getElementById('btn-save-docs-to-user-bundle');
+    const btnSearchSelected = document.getElementById('btn-search-selected-docs');
     const chkAll = document.getElementById('chk-doc-table-all');
     const allBoxes = document.querySelectorAll('.chk-doc-row');
     if (btnDeleteSelected) {
@@ -2923,6 +2944,16 @@ let isSearchInProgress = false;
         btnDeleteSelected.textContent = '🗑️ 선택한 말뭉치 일괄 삭제';
         btnDeleteSelected.style.fontWeight = 'normal';
       }
+    }
+    if (btnSaveBundle) {
+      btnSaveBundle.textContent = checkedBoxes.length > 0
+        ? `📚 선택한 ${checkedBoxes.length}개 → 사용자말뭉치 저장`
+        : '📚 선택한 말뭉치 → 사용자말뭉치 저장';
+    }
+    if (btnSearchSelected) {
+      btnSearchSelected.textContent = checkedBoxes.length > 0
+        ? `🔍 선택한 ${checkedBoxes.length}개 말뭉치에서 검색`
+        : '🔍 선택한 말뭉치에서 검색';
     }
     if (chkAll && allBoxes.length > 0) {
       chkAll.checked = checkedBoxes.length === allBoxes.length;
@@ -2982,6 +3013,112 @@ let isSearchInProgress = false;
       if (inputFolder && lastRebuildSourcePath) {
         inputFolder.value = lastRebuildSourcePath;
         alert(`원문 코퍼스 경로 '${lastRebuildSourcePath}' 가 채워졌습니다.\n[🚀 데이터베이스 생성 시작]을 누르면 다시 DB로 구축됩니다.`);
+      }
+    });
+  }
+
+  // 메타데이터 상세 보기 모달 함수
+  function openDocMetaModal(doc) {
+    const modal = document.getElementById('modal-doc-meta');
+    const titleEl = document.getElementById('modal-doc-meta-title');
+    const bodyEl = document.getElementById('modal-doc-meta-body');
+    if (!modal || !bodyEl) return;
+    if (titleEl) {
+      titleEl.textContent = `📋 메타데이터 전체 정보 — ${doc.title || doc.doc_id}`;
+    }
+    const renderChips = (raw) => {
+      if (!raw || !raw.trim()) {
+        return '<span style="color:#94a3b8; font-size:0.82rem;">수록된 정보가 없습니다.</span>';
+      }
+      return raw
+        .split(' | ')
+        .map((part) => `<span class="meta-tag-chip">${escapeHtml(part)}</span>`)
+        .join('');
+    };
+    bodyEl.innerHTML = `
+      <div class="meta-detail-section">
+        <h4>👤 화자 정보 (연령 · 국적 · 성별 · 등급 등)</h4>
+        <div class="meta-tag-list">${renderChips(doc.speaker_info)}</div>
+      </div>
+      <div class="meta-detail-section">
+        <h4>🗂️ 기타 정보 (매체 · 장르 · 주제 · 환경 · 출처 등)</h4>
+        <div class="meta-tag-list">${renderChips(doc.other_meta)}</div>
+      </div>
+      <div style="font-size:0.78rem; color:#64748b;">
+        <strong>DB 문서 ID:</strong> <code>${escapeHtml(doc.doc_id)}</code> ·
+        <strong>원본 파일:</strong> <code>${escapeHtml(doc.source_files_list || '')}</code>
+      </div>
+    `;
+    modal.style.display = 'flex';
+  }
+
+  const modalDocMeta = document.getElementById('modal-doc-meta');
+  const btnCloseDocMeta = document.getElementById('btn-close-doc-meta');
+  const btnOkDocMeta = document.getElementById('btn-ok-doc-meta');
+  [btnCloseDocMeta, btnOkDocMeta].forEach((b) => {
+    if (b && modalDocMeta) {
+      b.addEventListener('click', () => { modalDocMeta.style.display = 'none'; });
+    }
+  });
+  if (modalDocMeta) {
+    modalDocMeta.addEventListener('click', (e) => {
+      if (e.target === modalDocMeta) modalDocMeta.style.display = 'none';
+    });
+  }
+
+  // 구축 데이터베이스 문서 목록: 선택한 말뭉치 → 사용자말뭉치 저장
+  const btnSaveDocsToUserBundle = document.getElementById('btn-save-docs-to-user-bundle');
+  if (btnSaveDocsToUserBundle) {
+    btnSaveDocsToUserBundle.addEventListener('click', () => {
+      const checkedBoxes = Array.from(document.querySelectorAll('.chk-doc-row:checked'));
+      if (checkedBoxes.length === 0) {
+        alert('사용자말뭉치로 묶을 말뭉치를 목록에서 1개 이상 체크해 주세요.\n\n💡 팁: 첫 번째 문서를 체크한 뒤 Shift를 누른 채 다른 문서를 클릭하면 그 사이의 문서들이 모두 한 번에 선택됩니다.');
+        return;
+      }
+      const docIds = checkedBoxes.map((c) => c.dataset.docId);
+      const name = prompt(`선택한 ${docIds.length}개 말뭉치를 묶어 저장할 [사용자말뭉치] 이름을 입력하세요:`, '새 사용자말뭉치');
+      if (!name || !name.trim()) return;
+      const trimmed = name.trim();
+      saveUserCorpusBundle(trimmed, docIds);
+      activeUserBundleName = trimmed;
+      selectedDocIds = new Set(docIds);
+      updateDocSelectorTriggerLabel();
+      refreshUserCorpusSelects();
+      if (selectUserCorpus) selectUserCorpus.value = trimmed;
+      alert(`사용자말뭉치 '${trimmed}' (${docIds.length}개 말뭉치)가 저장되고 현재 검색 대상으로 선택되었습니다.\n상단 [사용자말뭉치] 메뉴에서도 언제든지 선택해 검색할 수 있습니다.`);
+    });
+  }
+
+  // 구축 데이터베이스 문서 목록: 선택한 말뭉치에서 바로 검색
+  const btnSearchSelectedDocs = document.getElementById('btn-search-selected-docs');
+  if (btnSearchSelectedDocs) {
+    btnSearchSelectedDocs.addEventListener('click', () => {
+      const checkedBoxes = Array.from(document.querySelectorAll('.chk-doc-row:checked'));
+      if (checkedBoxes.length === 0) {
+        alert('검색할 말뭉치를 목록에서 1개 이상 체크해 주세요.');
+        return;
+      }
+      const docIds = checkedBoxes.map((c) => c.dataset.docId);
+      activeUserBundleName = null;
+      if (selectUserCorpus) selectUserCorpus.value = '';
+      selectedDocIds = new Set(docIds);
+      updateDocSelectorTriggerLabel();
+      const tabSearchBtn = document.querySelector('.nav-tab[data-tab="tab-search"]');
+      if (tabSearchBtn) tabSearchBtn.click();
+    });
+  }
+
+  // 상단 사용자말뭉치 삭제 버튼
+  const btnDeleteActiveUserCorpus = document.getElementById('btn-delete-active-user-corpus');
+  if (btnDeleteActiveUserCorpus) {
+    btnDeleteActiveUserCorpus.addEventListener('click', () => {
+      const val = selectUserCorpus ? selectUserCorpus.value : '';
+      if (!val) {
+        alert('삭제할 사용자말뭉치를 먼저 선택해 주세요.');
+        return;
+      }
+      if (confirm(`사용자말뭉치 묶음 '${val}'을(를) 삭제하시겠습니까?\n(DB의 원본 말뭉치는 삭제되지 않고 묶음 목록에서만 제거됩니다.)`)) {
+        deleteUserCorpusBundle(val);
       }
     });
   }

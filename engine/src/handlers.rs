@@ -19,10 +19,14 @@ pub(crate) fn handle_overview(state: &AppState) -> ApiResponse {
     };
     state.memory_profile.apply_pragmas(&conn);
 
+    let _ = conn.execute("ALTER TABLE documents ADD COLUMN speaker_info TEXT DEFAULT ''", []);
+    let _ = conn.execute("ALTER TABLE documents ADD COLUMN other_meta TEXT DEFAULT ''", []);
+
     let mut documents = Vec::new();
     if let Ok(mut stmt) = conn.prepare(
         "SELECT doc_id, title, author, pub_year, corpus_category, annotation_layers,
-                source_files_list, storage_mode, sentence_count, eojeol_count, created_at
+                source_files_list, storage_mode, sentence_count, eojeol_count, created_at,
+                COALESCE(speaker_info, ''), COALESCE(other_meta, '')
          FROM documents ORDER BY rowid ASC",
     ) {
         if let Ok(rows) = stmt.query_map([], |row| {
@@ -38,6 +42,8 @@ pub(crate) fn handle_overview(state: &AppState) -> ApiResponse {
                 sentence_count: row.get(8)?,
                 eojeol_count: row.get(9)?,
                 created_at: row.get(10)?,
+                speaker_info: row.get(11).unwrap_or_default(),
+                other_meta: row.get(12).unwrap_or_default(),
             })
         }) {
             for r in rows.flatten() {
