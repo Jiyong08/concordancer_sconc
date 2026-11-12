@@ -309,6 +309,7 @@ pub(crate) struct AppState {
     pub(crate) latest_search_seq: AtomicU64,
     pub(crate) cancel_search_seq: AtomicU64,
     pub(crate) db_builder: Arc<Mutex<DbBuildManager>>,
+    pub(crate) last_pick_folder: Arc<Mutex<Option<PathBuf>>>,
     #[allow(dead_code)]
     pub(crate) port: u16,
 }

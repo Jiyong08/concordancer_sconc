@@ -1768,23 +1768,49 @@ pub fn build_folder_into_db_native(
     norm: &Normalizer,
     db_builder: &Arc<Mutex<DbBuildManager>>,
 ) -> Result<Value, String> {
+    build_paths_into_db_native(&[folder_path.to_path_buf()], db_path, norm, db_builder)
+}
+
+/// 폴더, 단일 파일 또는 복수의 파일 목록을 SQLite 코퍼스 데이터베이스에 적재
+pub fn build_paths_into_db_native(
+    input_paths: &[PathBuf],
+    db_path: &Path,
+    norm: &Normalizer,
+    db_builder: &Arc<Mutex<DbBuildManager>>,
+) -> Result<Value, String> {
     let t0 = Instant::now();
-    if !folder_path.exists() {
-        return Err(format!(
-            "지정한 경로가 존재하지 않습니다: {}",
-            folder_path.display()
-        ));
+    if input_paths.is_empty() {
+        return Err("처리할 경로 또는 파일이 지정되지 않았습니다.".to_string());
+    }
+
+    for p in input_paths {
+        if !p.exists() {
+            return Err(format!("지정한 경로가 존재하지 않습니다: {}", p.display()));
+        }
     }
 
     if let Some(parent) = db_path.parent() {
         let _ = fs::create_dir_all(parent);
     }
 
-    let all_files = collect_corpus_files(folder_path);
+    let mut all_files = Vec::new();
+    let mut seen_files = HashSet::new();
+    for p in input_paths {
+        for f in collect_corpus_files(p) {
+            if seen_files.insert(f.clone()) {
+                all_files.push(f);
+            }
+        }
+    }
     if all_files.is_empty() {
+        let path_summary = if input_paths.len() == 1 {
+            input_paths[0].display().to_string()
+        } else {
+            format!("{}개 지정 경로", input_paths.len())
+        };
         return Err(format!(
-            "폴더 내에 처리 가능한 말뭉치 파일(.txt, .xml, .json, .sgml, .tei)이 없습니다: {}",
-            folder_path.display()
+            "지정한 대상에 처리 가능한 말뭉치 파일(.txt, .xml, .json, .sgml, .tei)이 없습니다: {}",
+            path_summary
         ));
     }
 
@@ -1795,12 +1821,17 @@ pub fn build_folder_into_db_native(
         m.progress.percent = 1.0;
         m.progress.current_file = "폴더 내 말뭉치 파일 분류 중...".to_string();
     }
+    let input_desc = if input_paths.len() == 1 {
+        input_paths[0].to_string_lossy().into_owned()
+    } else {
+        format!("{}건의 파일/경로 (예: {})", input_paths.len(), input_paths[0].file_name().unwrap_or_default().to_string_lossy())
+    };
     push_log(
         db_builder,
         format!(
             "📂 스캔 완료: 총 {}개 말뭉치 파일 발견 ({})",
             total_files_count,
-            folder_path.display()
+            input_desc
         ),
     );
 
@@ -1952,7 +1983,7 @@ pub fn build_folder_into_db_native(
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_default();
         let upper = stem.to_uppercase();
-        let parent = f.parent().unwrap_or(folder_path).to_path_buf();
+        let parent = f.parent().unwrap_or(&input_paths[0]).to_path_buf();
         if upper.starts_with("BT") && stem.len() > 2 {
             bt_map.insert((parent, upper[2..].to_string()), f.clone());
         } else if upper.starts_with("BS") && stem.len() > 2 {
@@ -2106,7 +2137,7 @@ pub fn build_folder_into_db_native(
             .file_stem()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_default();
-        let parent = f.parent().unwrap_or(folder_path).to_path_buf();
+        let parent = f.parent().unwrap_or(&input_paths[0]).to_path_buf();
         if ext == "txt" {
             txt_stem_map.insert((parent, stem), f.clone());
         } else if ext == "xml" {
@@ -2522,7 +2553,7 @@ pub fn build_folder_into_db_native(
     let elapsed_sec = (t0.elapsed().as_secs_f64() * 100.0).round() / 100.0;
     let summary = json!({
         "ok": true,
-        "folder": folder_path.to_string_lossy(),
+        "folder": input_desc,
         "db_path": db_path.to_string_lossy(),
         "total_files_scanned": total_files_count,
         "documents_created": newly_created_doc_ids.len(),

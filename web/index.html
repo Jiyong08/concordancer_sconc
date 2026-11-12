@@ -285,16 +285,13 @@
                   <label for="builder-folder-path"><strong>말뭉치 폴더 절대/상대 경로:</strong></label>
                   <div style="display:flex; gap:6px; align-items:center;">
                     <button type="button" class="btn btn-primary" id="btn-browse-folder" style="padding:3px 10px; font-size:0.76rem; background:#2563eb; border-color:#2563eb;">
-                      📂 폴더 찾아보기...
-                    </button>
-                    <button type="button" class="btn btn-outline" id="btn-fill-sample-folder" style="padding:2px 8px; font-size:0.75rem;">
-                      ⚡ sample 폴더 경로 자동 채우기
+                      📂 폴더/파일 찾아보기...
                     </button>
                   </div>
                 </div>
-                <input type="text" id="builder-folder-path" value="sample" placeholder="예: sample 또는 원하는 말뭉치 폴더 경로 ([📂 폴더 찾아보기...] 클릭)" />
+                <input type="text" id="builder-folder-path" value="" placeholder="예: [📂 폴더/파일 찾아보기...] 클릭 또는 원하는 말뭉치 폴더/파일 경로 입력" />
                 <span style="font-size:0.75rem; color:#475569;">
-                  ※ 지정한 폴더 및 <strong>모든 하위 폴더(Subdirectories) 내의 텍스트(.txt, .xml, .json 등)를 재귀적으로 자동 탐색</strong>하여 변환합니다. (외부 Python 설치 없이 내장 엔진으로 즉시 변환)
+                  ※ 폴더 선택 시 해당 폴더 및 <strong>모든 하위 폴더 내 텍스트(.txt, .xml, .json 등)를 재귀 탐색</strong>하며, 단일 또는 복수의 파일 선택도 지원합니다.
                 </span>
               </div>
               <div class="builder-form-row">

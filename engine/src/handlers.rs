@@ -404,6 +404,7 @@ pub(crate) fn handle_segment_edit(
 pub(crate) struct BuildDbRequest {
     pub(crate) folder_path: String,
     pub(crate) db_name: Option<String>,
+    pub(crate) file_paths: Option<Vec<String>>,
 }
 
 pub(crate) fn handle_build_db(
@@ -415,26 +416,74 @@ pub(crate) fn handle_build_db(
         Err(e) => return json_response(&serde_json::json!({ "error": e.to_string() }), 400),
     };
 
-    let raw_folder = payload.folder_path.trim().to_string();
-    let resolved_folder = {
-        let p = PathBuf::from(&raw_folder);
-        if p.exists() {
-            p
-        } else {
-            let rel = state.root_dir.join(&raw_folder);
-            if rel.exists() {
-                rel
+    let mut resolved_paths: Vec<PathBuf> = Vec::new();
+
+    if let Some(ref list) = payload.file_paths {
+        for fp in list {
+            let clean = fp.trim();
+            if clean.is_empty() { continue; }
+            let p = PathBuf::from(clean);
+            if p.exists() {
+                resolved_paths.push(p);
             } else {
-                p
+                let rel = state.root_dir.join(clean);
+                if rel.exists() {
+                    resolved_paths.push(rel);
+                } else {
+                    resolved_paths.push(p);
+                }
             }
         }
-    };
+    }
 
-    if raw_folder.is_empty() || !resolved_folder.exists() {
+    if resolved_paths.is_empty() {
+        let raw_folder = payload.folder_path.trim().to_string();
+        if raw_folder.contains('|') || raw_folder.contains(';') {
+            let sep = if raw_folder.contains('|') { '|' } else { ';' };
+            for part in raw_folder.split(sep) {
+                let clean = part.trim();
+                if clean.is_empty() { continue; }
+                let p = PathBuf::from(clean);
+                if p.exists() {
+                    resolved_paths.push(p);
+                } else {
+                    let rel = state.root_dir.join(clean);
+                    if rel.exists() {
+                        resolved_paths.push(rel);
+                    } else {
+                        resolved_paths.push(p);
+                    }
+                }
+            }
+        } else if !raw_folder.is_empty() {
+            let p = PathBuf::from(&raw_folder);
+            if p.exists() {
+                resolved_paths.push(p);
+            } else {
+                let rel = state.root_dir.join(&raw_folder);
+                if rel.exists() {
+                    resolved_paths.push(rel);
+                } else {
+                    resolved_paths.push(p);
+                }
+            }
+        }
+    }
+
+    if resolved_paths.is_empty() {
         return json_response(
-            &serde_json::json!({ "error": format!("지정한 폴더가 존재하지 않습니다: {}", raw_folder) }),
+            &serde_json::json!({ "error": "지정한 파일 또는 폴더 경로를 입력하거나 선택해 주세요." }),
             400,
         );
+    }
+
+    for p in &resolved_paths {
+        if !p.exists() {
+            return json_response(
+                &serde_json::json!({ "error": format!("지정한 파일/폴더가 존재하지 않습니다: {}", p.display()) }),
+                400,
+            );
+        }
     }
 
     let target_db = if let Some(name) = payload.db_name {
@@ -459,13 +508,17 @@ pub(crate) fn handle_build_db(
     }
 
     let is_new_db = !target_db.exists();
-    let folder_str = resolved_folder.to_string_lossy().into_owned();
+    let desc_str = if resolved_paths.len() == 1 {
+        resolved_paths[0].to_string_lossy().into_owned()
+    } else {
+        format!("{}건의 선택 파일/폴더", resolved_paths.len())
+    };
     mgr.progress = DbBuildProgress {
         is_running: true,
         status: "RUNNING".to_string(),
         target_db_path: target_db.to_string_lossy().into_owned(),
         is_new_db_file: is_new_db,
-        log_lines: vec![format!("[시작] 내장 Rust 파서로 말뭉치 폴더 스캔 시작: {}", folder_str)],
+        log_lines: vec![format!("[시작] 내장 Rust 파서로 말뭉치 스캔 시작: {}", desc_str)],
         ..DbBuildProgress::default()
     };
 
@@ -477,8 +530,8 @@ pub(crate) fn handle_build_db(
 
     // 백그라운드 네이티브 Rust DB 빌더 스레드 (외부 Python 불필요)
     std::thread::spawn(move || {
-        if let Err(e) = builder::build_folder_into_db_native(
-            &resolved_folder,
+        if let Err(e) = builder::build_paths_into_db_native(
+            &resolved_paths,
             &target_db,
             &normalizer_clone,
             &db_builder_arc,
@@ -496,24 +549,68 @@ pub(crate) fn handle_build_db(
 pub(crate) fn handle_pick_folder(state: &AppState) -> ApiResponse {
     #[cfg(target_os = "windows")]
     {
-        let initial_dir = state.root_dir.to_string_lossy().replace('\'', "''");
+        let init_dir_path = {
+            let guard = state.last_pick_folder.lock().unwrap();
+            guard.clone().unwrap_or_else(|| PathBuf::from(r"C:\"))
+        };
+        let init_dir_str = if init_dir_path.exists() {
+            init_dir_path.to_string_lossy().replace('\'', "''")
+        } else {
+            r"C:\".to_string()
+        };
+
         let ps_script = format!(
-            "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; \
-             Add-Type -AssemblyName System.Windows.Forms; \
-             $f = New-Object System.Windows.Forms.FolderBrowserDialog; \
-             $f.Description = '말뭉치 텍스트/XML 파일이 들어 있는 폴더를 선택하세요'; \
-             $f.SelectedPath = '{}'; \
-             $f.ShowNewFolderButton = $false; \
-             if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {{ Write-Output $f.SelectedPath }}",
-            initial_dir
+            "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8;              Add-Type -AssemblyName System.Windows.Forms;              $d = New-Object System.Windows.Forms.OpenFileDialog;              $d.Title = '말뭉치 파일(복수 선택 가능) 또는 파일이 있는 폴더 선택';              $d.Filter = '말뭉치 텍스트 파일 (*.txt;*.xml;*.json;*.sgml;*.tei;*.csv;*.tsv)|*.txt;*.xml;*.json;*.sgml;*.tei;*.csv;*.tsv|모든 파일 (*.*)|*.*';              $d.Multiselect = $true;              $d.CheckFileExists = $false;              $d.InitialDirectory = '{}';              $d.FileName = '폴더전체선택';              if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {{                  if ($d.FileNames.Count -eq 1 -and [System.IO.Path]::GetFileName($d.FileName) -eq '폴더전체선택') {{                      [Console]::WriteLine('DIR|' + [System.IO.Path]::GetDirectoryName($d.FileName))                  }} else {{                      foreach ($f in $d.FileNames) {{ [Console]::WriteLine('FILE|' + $f) }}                  }}              }}",
+            init_dir_str
         );
+
         if let Ok(output) = Command::new("powershell")
             .args(["-NoProfile", "-STA", "-Command", &ps_script])
             .output()
         {
-            let selected = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !selected.is_empty() {
-                return json_response(&serde_json::json!({ "ok": true, "folder_path": selected }), 200);
+            let stdout_str = String::from_utf8_lossy(&output.stdout);
+            let mut files = Vec::new();
+            let mut folder_res: Option<String> = None;
+
+            for line in stdout_str.lines() {
+                let clean = line.trim();
+                if clean.starts_with("DIR|") {
+                    folder_res = Some(clean[4..].trim().to_string());
+                } else if clean.starts_with("FILE|") {
+                    files.push(clean[5..].trim().to_string());
+                }
+            }
+
+            if let Some(dir) = folder_res {
+                let p = PathBuf::from(&dir);
+                if p.exists() {
+                    let mut guard = state.last_pick_folder.lock().unwrap();
+                    *guard = Some(p);
+                }
+                return json_response(&serde_json::json!({
+                    "ok": true,
+                    "folder_path": dir,
+                    "is_folder": true,
+                    "file_paths": [dir]
+                }), 200);
+            } else if !files.is_empty() {
+                if let Some(first) = files.first() {
+                    if let Some(parent) = Path::new(first).parent() {
+                        let mut guard = state.last_pick_folder.lock().unwrap();
+                        *guard = Some(parent.to_path_buf());
+                    }
+                }
+                let display_str = if files.len() == 1 {
+                    files[0].clone()
+                } else {
+                    files.join(" | ")
+                };
+                return json_response(&serde_json::json!({
+                    "ok": true,
+                    "folder_path": display_str,
+                    "is_folder": false,
+                    "file_paths": files
+                }), 200);
             }
         }
         return json_response(&serde_json::json!({ "ok": false, "cancelled": true }), 200);
@@ -521,7 +618,7 @@ pub(crate) fn handle_pick_folder(state: &AppState) -> ApiResponse {
     #[cfg(not(target_os = "windows"))]
     {
         let _ = state;
-        json_response(&serde_json::json!({ "ok": false, "error": "Windows 환경에서만 폴더 선택 대화상자를 지원합니다." }), 400)
+        json_response(&serde_json::json!({ "ok": false, "error": "Windows 환경에서만 파일/폴더 선택 대화상자를 지원합니다." }), 400)
     }
 }
 

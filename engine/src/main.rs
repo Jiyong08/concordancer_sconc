@@ -206,6 +206,7 @@ fn main() {
         latest_search_seq: AtomicU64::new(0),
         cancel_search_seq: AtomicU64::new(0),
         db_builder: Arc::new(Mutex::new(DbBuildManager::new())),
+        last_pick_folder: Arc::new(Mutex::new(None)),
         port,
     });
 
@@ -571,6 +572,7 @@ mod tests {
             latest_search_seq: AtomicU64::new(0),
             cancel_search_seq: AtomicU64::new(0),
             db_builder: Arc::new(Mutex::new(DbBuildManager::new())),
+            last_pick_folder: Arc::new(Mutex::new(None)),
             port: 8787,
         };
 

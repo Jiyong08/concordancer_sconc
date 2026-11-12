@@ -1904,23 +1904,34 @@ let isSearchInProgress = false;
   btnStartBuild.addEventListener('click', async () => {
     const folderPath = builderFolderPath.value.trim();
     const dbName = builderDbName.value.trim();
-    if (!folderPath) {
-      alert('말뭉치 폴더 경로를 입력해 주세요.');
+    if (!folderPath && (!selectedBuildFilePaths || selectedBuildFilePaths.length === 0)) {
+      alert('말뭉치 폴더 또는 파일 경로를 입력해 주세요.');
       builderFolderPath.focus();
       return;
+    }
+
+    let filesToSend = null;
+    if (selectedBuildFilePaths && selectedBuildFilePaths.length > 0) {
+      if (builderFolderPath.value.includes(`선택한 ${selectedBuildFilePaths.length}개 파일`) || builderFolderPath.value === selectedBuildFilePaths[0]) {
+        filesToSend = selectedBuildFilePaths;
+      }
     }
 
     btnStartBuild.disabled = true;
     if (builderStatusBadge) {
       builderStatusBadge.style.display = 'inline-block';
-      builderStatusBadge.innerHTML = '⏳ 말뭉치 폴더 스캔 및 데이터베이스 생성 프로세스 시작 중…';
+      builderStatusBadge.innerHTML = '⏳ 말뭉치 스캔 및 데이터베이스 생성 프로세스 시작 중…';
     }
 
     try {
       const res = await fetch('/api/build-db', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folder_path: folderPath, db_name: dbName }),
+        body: JSON.stringify({
+          folder_path: folderPath,
+          file_paths: filesToSend,
+          db_name: dbName,
+        }),
       });
       const data = await res.json();
       if (builderStatusBadge) builderStatusBadge.style.display = 'none';
@@ -2658,30 +2669,38 @@ let isSearchInProgress = false;
       document.querySelector('.nav-tab[data-tab="tab-build-db"]').click();
     });
   }
-  const btnFillSampleFolder = document.getElementById('btn-fill-sample-folder');
-  if (btnFillSampleFolder) {
-    btnFillSampleFolder.addEventListener('click', () => {
-      if (builderFolderPath) builderFolderPath.value = 'sample';
-      if (builderDbName) builderDbName.value = 'concordance.corpdb';
-    });
-  }
+  let selectedBuildFilePaths = [];
+
   const btnBrowseFolder = document.getElementById('btn-browse-folder');
   if (btnBrowseFolder) {
     btnBrowseFolder.addEventListener('click', async () => {
       try {
         btnBrowseFolder.disabled = true;
-        btnBrowseFolder.textContent = '⏳ 폴더 창 여는 중...';
+        btnBrowseFolder.textContent = '⏳ 창 여는 중...';
         const res = await fetch('/api/system/pick-folder', { method: 'POST' });
         const data = await res.json();
-        if (data.ok && data.folder_path && builderFolderPath) {
-          builderFolderPath.value = data.folder_path;
-          builderFolderPath.focus();
+        if (data.ok) {
+          if (data.file_paths && data.file_paths.length > 0) {
+            selectedBuildFilePaths = data.file_paths;
+            if (builderFolderPath) {
+              if (data.file_paths.length === 1) {
+                builderFolderPath.value = data.file_paths[0];
+              } else {
+                builderFolderPath.value = `[선택한 ${data.file_paths.length}개 파일] ${data.file_paths[0]} 외`;
+              }
+              builderFolderPath.focus();
+            }
+          } else if (data.folder_path && builderFolderPath) {
+            selectedBuildFilePaths = [];
+            builderFolderPath.value = data.folder_path;
+            builderFolderPath.focus();
+          }
         }
       } catch (e) {
-        console.warn('Folder picker error:', e);
+        console.warn('Folder/file picker error:', e);
       } finally {
         btnBrowseFolder.disabled = false;
-        btnBrowseFolder.textContent = '📂 폴더 찾아보기...';
+        btnBrowseFolder.textContent = '📂 폴더/파일 찾아보기...';
       }
     });
   }
