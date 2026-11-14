@@ -1586,15 +1586,29 @@ pub fn parse_plain_or_script(
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "TXT".to_string());
+    let ext = filepath
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let is_markup = matches!(ext.as_str(), "xml" | "sgml" | "tei" | "html" | "htm");
 
     let mut segments = Vec::new();
     let mut cur_scene = "본문".to_string();
     let mut idx = 0usize;
 
     for l in text.lines() {
-        let s = l.trim();
+        let mut s = l.trim().to_string();
         if s.is_empty() {
             continue;
+        }
+        if is_markup {
+            if s.starts_with("<?") || s.starts_with("<!") {
+                continue;
+            }
+            s = strip_tags(&s);
+            if s.is_empty() {
+                continue;
+            }
         }
         if s.starts_with('#') {
             cur_scene = s.chars().take(30).collect();
@@ -1607,7 +1621,7 @@ pub fn parse_plain_or_script(
             "text",
             &cur_scene,
             "kor",
-            s,
+            &s,
             "",
             "",
             "",
@@ -1856,6 +1870,7 @@ pub fn build_paths_into_db_native(
     let mut total_eojeols_added = 0usize;
     let mut newly_created_doc_ids = Vec::new();
     let mut summary_items = Vec::new();
+    let mut raw_only_files: Vec<String> = Vec::new();
 
     // 문서 1건 및 세그먼트를 즉시 트랜잭션 커밋하는 클로저
     let save_doc_to_db = |conn: &mut Connection,
@@ -2339,8 +2354,8 @@ pub fn build_paths_into_db_native(
         } else if head_slice.contains("<Korean_Learners_Corpus")
             || head_slice.contains("<LearnerCorpus")
             || head_slice.contains("<MorphemeAnnotations")
-            || head_slice.contains("<SENTENCE>")
-            || head_slice.contains("<SENTENCE ")
+            || ((head_slice.contains("<SENTENCE>") || head_slice.contains("<SENTENCE "))
+                && head_slice.contains("<morph"))
         {
             if let Ok((theme, nat, grade, s, _)) = parse_learner_xml(f, &doc_id, norm) {
                 segs = s;
@@ -2370,7 +2385,7 @@ pub fn build_paths_into_db_native(
                     title = format!("{} (원시 JSON)", stem);
                 }
             }
-        } else if upper_fname.starts_with("5CT_")
+        } else if (upper_fname.starts_with("5CT_") && head_slice.contains('\t'))
             || (head_slice.contains("<s n=") && head_slice.contains('\t') && head_slice.contains("<u "))
         {
             if let Ok((s, _)) = parse_sejong_spoken_morph(f, norm) {
@@ -2382,7 +2397,7 @@ pub fn build_paths_into_db_native(
                 layers = "구어전사 원문 + 형태소분석 + 화자정보".to_string();
                 title = format!("{} (세종 구어 형태분석)", stem);
             }
-        } else if upper_fname.starts_with("4CM_")
+        } else if (upper_fname.starts_with("4CM_") && head_slice.contains("<s n="))
             || (head_slice.contains("<u who=") && head_slice.contains("<s n="))
         {
             if let Ok((s, _)) = parse_sejong_spoken_raw(f, norm) {
@@ -2394,7 +2409,7 @@ pub fn build_paths_into_db_native(
                 layers = "구어전사 원문 + 화자/억양 표지".to_string();
                 title = format!("{} (세종 구어 원시)", stem);
             }
-        } else if upper_fname.starts_with("BG")
+        } else if (upper_fname.starts_with("BG") && head_slice.contains("(S"))
             || (head_slice.contains("(S") && head_slice.contains("\n;"))
             || (head_slice.contains("(NP") && head_slice.contains("(VP"))
         {
@@ -2408,7 +2423,7 @@ pub fn build_paths_into_db_native(
                 layers = "원문 + 구문분석(S-Expression)".to_string();
                 title = format!("{} (세종 구문분석)", stem);
             }
-        } else if upper_fname.starts_with("BS")
+        } else if (upper_fname.starts_with("BS") && head_slice.contains('\t') && head_slice.contains("__"))
             || (head_slice.contains('\t')
                 && Regex::new(r"__\d+/").map(|r| r.is_match(&head_slice)).unwrap_or(false))
         {
@@ -2422,7 +2437,7 @@ pub fn build_paths_into_db_native(
                 layers = "원문 + 형태의미분석(어깨번호)".to_string();
                 title = format!("{} (세종 형태의미분석)", stem);
             }
-        } else if upper_fname.starts_with("BT")
+        } else if (upper_fname.starts_with("BT") && head_slice.contains('\t') && head_slice.contains('/'))
             || (head_slice.contains('\t')
                 && Regex::new(r"/[NVMAJSEUX][A-Z]{1,3}").map(|r| r.is_match(&head_slice)).unwrap_or(false))
         {
@@ -2455,19 +2470,24 @@ pub fn build_paths_into_db_native(
                     title = format!("{} (세종 문어 원시)", stem);
                 }
             }
-        } else if let Ok((s, _)) = parse_plain_or_script(f, norm) {
-            segs = s;
-            let has_old = segs.iter().any(|x| contains_old_hangul_jamo(&x.text_unicode));
-            ctype = if has_old {
-                "일반 텍스트 말뭉치 (옛한글)".to_string()
-            } else {
-                "원시 말뭉치 (일반 평문/대본)".to_string()
-            };
-            tformat = "Plain Text".to_string();
-            raw_desc = "줄바꿈 단위 대사/문장 평문 표기".to_string();
-            ana_desc = "없음 (원시 텍스트)".to_string();
-            layers = "원문".to_string();
-            title = format!("{} (일반 텍스트)", stem);
+        }
+
+        // 알려진 특화 파서에서 문장이 추출되지 않은 경우(샘플과 다른 형식의 파일), 원문 평문 파서로 안전 폴백
+        if segs.is_empty() {
+            if let Ok((s, _)) = parse_plain_or_script(f, norm) {
+                segs = s;
+                let has_old = segs.iter().any(|x| contains_old_hangul_jamo(&x.text_unicode));
+                ctype = if has_old {
+                    "일반 텍스트 말뭉치 (옛한글)".to_string()
+                } else {
+                    "원시 말뭉치 (원문 전용)".to_string()
+                };
+                tformat = "Plain Text (원문 전용 폴백)".to_string();
+                raw_desc = "줄바꿈 단위 원문 평문 표기".to_string();
+                ana_desc = "없음 (원문 말뭉치 DB만 구축)".to_string();
+                layers = "원문".to_string();
+                title = format!("{} (원문 전용)", stem);
+            }
         }
 
         if segs.is_empty() {
@@ -2477,6 +2497,33 @@ pub fn build_paths_into_db_native(
                 format!("⚠️ [문장 없음 건너뜀] {}: 추출된 문장이 없습니다.", fname),
             );
             continue;
+        }
+
+        let actual_has_morph = segs.iter().any(|s| !s.morph_flat.trim().is_empty());
+        let actual_has_sense = segs.iter().any(|s| !s.sense_flat.trim().is_empty());
+        let actual_has_syntax = segs.iter().any(|s| !s.syntax_tree.trim().is_empty());
+        let is_raw_only = !actual_has_morph && !actual_has_sense && !actual_has_syntax;
+
+        if is_raw_only {
+            if ctype.contains("형태")
+                || ctype.contains("의미")
+                || ctype.contains("구문")
+                || layers.contains("형태")
+                || layers.contains("의미")
+                || layers.contains("구문")
+            {
+                ctype = "원시 말뭉치 (원문 전용)".to_string();
+                layers = "원문".to_string();
+                ana_desc = "없음 (원문 말뭉치 DB만 구축)".to_string();
+            }
+            raw_only_files.push(fname.clone());
+            push_log(
+                db_builder,
+                format!(
+                    "ℹ️ [원문 전용 구축] {}: 알려진 형태·의미·구문 주석 형식이 아니므로 원문 말뭉치 DB만 생성했습니다.",
+                    fname
+                ),
+            );
         }
 
         let (meta_sp, meta_ot) = extract_corpus_metadata_from_file(f);
@@ -2521,7 +2568,11 @@ pub fn build_paths_into_db_native(
                     "type": ctype,
                     "doc_id": doc_id,
                     "files": [fname],
-                    "sentences": segs.len()
+                    "sentences": segs.len(),
+                    "raw_only": is_raw_only,
+                    "has_morph": actual_has_morph,
+                    "has_sense": actual_has_sense,
+                    "has_syntax": actual_has_syntax
                 }));
 
                 let pct = (processed_files_count as f64 / total_files_count as f64) * 100.0;
@@ -2560,6 +2611,8 @@ pub fn build_paths_into_db_native(
         "sentences_imported": total_sents_added,
         "eojeols_imported": total_eojeols_added,
         "elapsed_sec": elapsed_sec,
+        "raw_only_count": raw_only_files.len(),
+        "raw_only_files": raw_only_files,
         "items": summary_items
     });
 

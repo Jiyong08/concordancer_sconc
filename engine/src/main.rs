@@ -848,4 +848,66 @@ mod tests {
         assert_eq!(right3, "");
         assert_eq!(format!("{}{}{}", left3, node3, right3), text);
     }
+
+    #[test]
+    fn test_unknown_format_builds_raw_only_db() {
+        use crate::builder::build_paths_into_db_native;
+        use crate::normalizer::Normalizer;
+        use crate::DbBuildManager;
+        use rusqlite::Connection;
+        use std::sync::{Arc, Mutex};
+
+        let tmp_dir = std::env::temp_dir().join(format!(
+            "sconc_raw_only_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+
+        let txt_path = tmp_dir.join("BT_plain_note.txt");
+        std::fs::write(&txt_path, "이것은 일반 평문 테스트 문장입니다.\n두 번째 문장도 있습니다.\n").unwrap();
+
+        let xml_path = tmp_dir.join("custom_corpus.xml");
+        std::fs::write(
+            &xml_path,
+            "<root><entry>샘플 형식과 다른 XML 본문입니다.</entry></root>",
+        )
+        .unwrap();
+
+        let db_path = tmp_dir.join("test_raw_only.corpdb");
+        let norm = Normalizer::new(&tmp_dir.join("nonexistent_pua.json"));
+        let mgr = Arc::new(Mutex::new(DbBuildManager::new()));
+        mgr.lock().unwrap().progress.is_running = true;
+
+        let summary = build_paths_into_db_native(&[txt_path, xml_path], &db_path, &norm, &mgr)
+            .expect("raw-only build should succeed");
+
+        assert_eq!(summary["documents_created"].as_u64(), Some(2));
+        assert_eq!(summary["raw_only_count"].as_u64(), Some(2));
+        let raw_files = summary["raw_only_files"].as_array().unwrap();
+        assert_eq!(raw_files.len(), 2);
+
+        let conn = Connection::open(&db_path).unwrap();
+        let non_raw_cnt: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM segments WHERE TRIM(morph_flat) != '' OR TRIM(sense_flat) != '' OR TRIM(syntax_tree) != ''",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(non_raw_cnt, 0, "미지원 형식 파일에서 형태·의미·구문 분석 데이터가 생성되면 안 됨");
+
+        let layer_cnt: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM documents WHERE annotation_layers != '원문'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(layer_cnt, 0, "모든 문서는 '원문' 층위로만 등록되어야 함");
+
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
 }

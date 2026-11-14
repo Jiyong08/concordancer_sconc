@@ -1859,12 +1859,23 @@ let isSearchInProgress = false;
           const sents = (prog.sentences_imported || summary.sentences_imported || 0).toLocaleString();
           const eojeols = (prog.eojeols_imported || summary.eojeols_imported || 0).toLocaleString();
           const docsCount = (prog.newly_created_doc_ids && prog.newly_created_doc_ids.length) || summary.documents_created || 0;
+          const rawOnlyCount = summary.raw_only_count || 0;
+          const rawOnlyFiles = Array.isArray(summary.raw_only_files) ? summary.raw_only_files : [];
 
           if (builderSummaryBanner) {
+            const rawOnlyNoticeHtml = rawOnlyCount > 0 ? `
+              <div style="margin-top:10px; padding:10px 12px; border-radius:6px; background:#fff7ed; border:1px solid #fdba74; color:#9a3412; font-size:0.92em; line-height:1.5;">
+                <strong>ℹ️ 원문 전용 DB 구축 안내 (${rawOnlyCount}개 파일):</strong><br/>
+                지원되는 주석 말뭉치 형식(세종·학습자·국어원 JSON 등)과 달라 형태·의미·구문 분석 층위 DB는 생성하지 않고 <strong>원문 말뭉치 DB만</strong> 구축했습니다.<br/>
+                <span style="word-break:break-all;">대상 파일: <code>${escapeHtml(rawOnlyFiles.join(', '))}</code></span>
+              </div>
+            ` : '';
+
             builderSummaryBanner.innerHTML = `
               <strong>🎉 데이터베이스 생성이 성공적으로 완료되었습니다!</strong><br/>
               대상 DB: <code>${escapeHtml(prog.target_db_path || 'concordance.corpdb')}</code><br/>
               처리 완료 파일: <strong>${prog.total_files || 0}개</strong> · 등록된 말뭉치: <strong>${docsCount}개</strong> · 총 구축 문장: <strong>${sents}개</strong> (${eojeols}어절)
+              ${rawOnlyNoticeHtml}
             `;
           }
 
@@ -1872,7 +1883,10 @@ let isSearchInProgress = false;
             builderItemsTbody.innerHTML = (summary.items || []).map(item => `
               <tr>
                 <td><code><strong>${escapeHtml(item.doc_id)}</strong></code></td>
-                <td><span class="layer-badge badge-old">${escapeHtml(item.type)}</span></td>
+                <td>
+                  <span class="layer-badge badge-old">${escapeHtml(item.type)}</span>
+                  ${item.raw_only ? '<span class="layer-badge" style="margin-left:4px; background:#ffedd5; color:#9a3412; border:1px solid #fdba74;">원문 전용 · 주석 미생성</span>' : ''}
+                </td>
                 <td><code>${escapeHtml((item.files || []).join(', '))}</code></td>
                 <td style="text-align:right; font-weight:700;">${(item.sentences || 0).toLocaleString()}문장</td>
               </tr>
@@ -1882,7 +1896,10 @@ let isSearchInProgress = false;
 
           // [핵심] 구축된 DB를 즉시 반영하여 '문서지정' 탭과 검색기 목록 새로고침
           await loadOverview();
-          alert(`🎉 데이터베이스 생성이 완료되었습니다!\n\n총 ${prog.total_files || 0}개 파일 중 ${docsCount}개 말뭉치 (${sents}문장)가 DB에 성공적으로 등록되었습니다.\n지금 바로 검색하거나 '문서지정' 탭에서 확인하실 수 있습니다.`);
+          const rawOnlyAlert = rawOnlyCount > 0
+            ? `\n\n[안내] 지원되는 주석 형식과 다른 ${rawOnlyCount}개 파일(${rawOnlyFiles.join(', ')})은 형태·의미·구문 분석 DB를 생성하지 않고 원문 말뭉치 DB만 구축했습니다.`
+            : '';
+          alert(`🎉 데이터베이스 생성이 완료되었습니다!\n\n총 ${prog.total_files || 0}개 파일 중 ${docsCount}개 말뭉치 (${sents}문장)가 DB에 성공적으로 등록되었습니다.\n지금 바로 검색하거나 '문서지정' 탭에서 확인하실 수 있습니다.${rawOnlyAlert}`);
         } else if (prog.status === 'ERROR') {
           stopBuildPolling();
           btnStartBuild.disabled = false;
