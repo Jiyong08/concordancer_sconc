@@ -615,10 +615,98 @@ pub(crate) fn handle_pick_folder(state: &AppState) -> ApiResponse {
         }
         return json_response(&serde_json::json!({ "ok": false, "cancelled": true }), 200);
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    {
+        let init_dir_path = {
+            let guard = state.last_pick_folder.lock().unwrap();
+            guard.clone().unwrap_or_else(|| {
+                std::env::var_os("HOME")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from("/"))
+            })
+        };
+        let init_dir_str = if init_dir_path.exists() {
+            init_dir_path.to_string_lossy().replace('"', "\\\"")
+        } else {
+            "/".to_string()
+        };
+
+        let apple_script = format!(
+            "set initLoc to POSIX file \"{}\" as alias\n\
+             set choiceBtn to button returned of (display dialog \"말뭉치 대상을 선택하세요.\" buttons {{\"취소\", \"파일 선택(복수 가능)\", \"폴더 전체 선택\"}} default button \"폴더 전체 선택\" with title \"말뭉치 폴더/파일 선택\")\n\
+             if choiceBtn is \"폴더 전체 선택\" then\n\
+               set chosenFolder to choose folder with prompt \"말뭉치 폴더를 선택하세요\" default location initLoc\n\
+               return \"DIR|\" & POSIX path of chosenFolder\n\
+             else if choiceBtn is \"파일 선택(복수 가능)\" then\n\
+               set chosenFiles to choose file with prompt \"말뭉치 파일을 선택하세요 (Command 키로 복수 선택 가능)\" default location initLoc with multiple selections allowed\n\
+               set outStr to \"\"\n\
+               repeat with f in chosenFiles\n\
+                 set outStr to outStr & \"FILE|\" & POSIX path of f & linefeed\n\
+               end repeat\n\
+               return outStr\n\
+             end if",
+            init_dir_str
+        );
+
+        if let Ok(output) = Command::new("osascript").args(["-e", &apple_script]).output() {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let mut files: Vec<String> = Vec::new();
+                let mut picked_dir: Option<String> = None;
+
+                for line in stdout.lines() {
+                    let trimmed = line.trim();
+                    if let Some(d) = trimmed.strip_prefix("DIR|") {
+                        let d_clean = d.trim_end_matches('/').to_string();
+                        if !d_clean.is_empty() {
+                            picked_dir = Some(d_clean);
+                        }
+                    } else if let Some(f) = trimmed.strip_prefix("FILE|") {
+                        let f_clean = f.trim().to_string();
+                        if !f_clean.is_empty() {
+                            files.push(f_clean);
+                        }
+                    }
+                }
+
+                if let Some(dir) = picked_dir {
+                    if let Ok(mut guard) = state.last_pick_folder.lock() {
+                        *guard = Some(PathBuf::from(&dir));
+                    }
+                    return json_response(&serde_json::json!({
+                        "ok": true,
+                        "folder_path": dir,
+                        "is_folder": true,
+                        "file_paths": []
+                    }), 200);
+                }
+
+                if !files.is_empty() {
+                    if let Some(parent) = PathBuf::from(&files[0]).parent() {
+                        if let Ok(mut guard) = state.last_pick_folder.lock() {
+                            *guard = Some(parent.to_path_buf());
+                        }
+                    }
+                    let display_str = if files.len() == 1 {
+                        files[0].clone()
+                    } else {
+                        format!("[선택한 {}개 파일] {} 외", files.len(), files[0])
+                    };
+                    return json_response(&serde_json::json!({
+                        "ok": true,
+                        "folder_path": display_str,
+                        "is_folder": false,
+                        "file_paths": files
+                    }), 200);
+                }
+            }
+        }
+        return json_response(&serde_json::json!({ "ok": false, "cancelled": true }), 200);
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let _ = state;
-        json_response(&serde_json::json!({ "ok": false, "error": "Windows 환경에서만 파일/폴더 선택 대화상자를 지원합니다." }), 400)
+        json_response(&serde_json::json!({ "ok": false, "error": "Windows/macOS 환경에서만 파일/폴더 선택 대화상자를 지원합니다." }), 400)
     }
 }
 
@@ -739,7 +827,36 @@ pub(crate) fn handle_export_save_txt(state: &AppState, body: &[u8]) -> ApiRespon
         return json_response(&serde_json::json!({ "ok": true, "saved_path": selected }), 200);
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    {
+        let default_name = payload.default_name.replace('"', "\\\"");
+        let apple_script = format!(
+            "set chosenFile to choose file name with prompt \"검색 결과 TXT 저장\" default name \"{}\"\nreturn POSIX path of chosenFile",
+            default_name
+        );
+        let output = match Command::new("osascript").args(["-e", &apple_script]).output() {
+            Ok(o) => o,
+            Err(e) => {
+                return json_response(&serde_json::json!({ "ok": false, "error": format!("macOS 저장 대화상자 실행 오류: {}", e) }), 500);
+            }
+        };
+        if !output.status.success() {
+            return json_response(&serde_json::json!({ "ok": false, "cancelled": true }), 200);
+        }
+        let mut selected = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if selected.is_empty() {
+            return json_response(&serde_json::json!({ "ok": false, "cancelled": true }), 200);
+        }
+        if !selected.to_lowercase().ends_with(".txt") {
+            selected.push_str(".txt");
+        }
+        if let Err(e) = fs::write(&selected, payload.content.as_bytes()) {
+            return json_response(&serde_json::json!({ "ok": false, "error": format!("파일 쓰기 실패: {}", e) }), 500);
+        }
+        return json_response(&serde_json::json!({ "ok": true, "saved_path": selected }), 200);
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let out_path = state.root_dir.join(&payload.default_name);
         if let Err(e) = fs::write(&out_path, payload.content.as_bytes()) {

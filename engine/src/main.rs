@@ -6,6 +6,7 @@ mod handlers;
 mod jamo_table;
 mod models;
 mod normalizer;
+mod preflight;
 mod search;
 
 pub use models::{DbBuildManager, DbBuildProgress};
@@ -83,6 +84,16 @@ fn find_root_dir() -> PathBuf {
     }
     if let Ok(exe_path) = env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {
+            // macOS .app 번들(S-conc.app/Contents/MacOS/sconc)에서 실행되는 경우,
+            // 읽기 전용 번들 내부가 아닌 쓰기 가능한 ~/Documents/S-conc 를 작업 폴더로 사용
+            let exe_str = exe_dir.to_string_lossy();
+            if exe_str.contains(".app/Contents/MacOS") || exe_str.contains(".app\\Contents\\MacOS") {
+                if let Some(home) = env::var_os("HOME") {
+                    let doc_dir = PathBuf::from(home).join("Documents").join("S-conc");
+                    let _ = fs::create_dir_all(&doc_dir);
+                    return doc_dir;
+                }
+            }
             let mut anc = exe_dir;
             loop {
                 if anc.join("web").join("index.html").exists() || anc.join("db").exists() {
@@ -240,6 +251,9 @@ fn main() {
     }
 
     let _ = auto_open;
+    // GUI 실행 전 필수 런타임/라이브러리 자동 탐지 및 사용자 승인 설치
+    preflight::ensure_runtime_dependencies();
+
     let event_loop = EventLoop::new();
     let window_icon = tao::window::Icon::from_rgba(EMBEDDED_ICON_RGBA.to_vec(), 64, 64).ok();
     let window = WindowBuilder::new()

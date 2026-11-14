@@ -12,8 +12,15 @@
 
 ## 🚀 빠른 시작 (Quick Start)
 
-1. 배포 폴더에서 **`sconc.exe`** (또는 `run_sconc.bat`)를 더블클릭합니다.
-2. 별도의 설정이나 설치 과정 없이 즉시 독립 데스크톱 애플리케이션 창이 실행됩니다.
+### Windows
+1. 저장소의 **`sconc.exe`** (또는 GitHub Releases의 `sconc-Windows.exe`)를 더블클릭합니다.
+2. 구동에 필요한 필수 런타임(Microsoft Edge WebView2)이 없는 경우 자동으로 감지하여 사용자 승인 후 설치를 안내하며, 즉시 독립 데스크톱 창이 실행됩니다.
+
+### macOS (Apple Silicon & Intel 통합 지원)
+1. GitHub 저장소 우측 **Releases** 페이지에서 **`S-conc-macOS-Universal.zip`**을 다운로드하여 압축을 해제합니다.
+2. 압축이 풀린 **`S-conc.app`**을 응용 프로그램 폴더로 옮기거나 더블클릭하여 실행합니다.
+   - *최초 실행 시 macOS 보안 경고("확인되지 않은 개발자")가 표시되면, **`S-conc.app` 우클릭 → [열기]**를 누르거나 `[시스템 설정] → [개인정보 보호 및 보안]`에서 **[확인 없이 열기]**를 선택하세요.*
+   - macOS 환경에서는 사용자 문서 폴더(`~/Documents/S-conc/db/`)에 데이터베이스가 자동 생성·관리됩니다.
 
 ---
 
