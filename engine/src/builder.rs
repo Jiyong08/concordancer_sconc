@@ -88,6 +88,9 @@ pub struct SegmentRecord {
     pub morph_flat: String,
     pub sense_flat: String,
     pub syntax_tree: String,
+    pub error_flat: String,
+    pub errors_json: String,
+    pub corrected_text: String,
     pub eojeols_json: String,
     pub eojeol_cnt: usize,
 }
@@ -389,6 +392,9 @@ fn make_segment(
         morph_flat: morph_uni,
         sense_flat: sense_uni,
         syntax_tree: syntax_uni,
+        error_flat: String::new(),
+        errors_json: String::new(),
+        corrected_text: String::new(),
         eojeols_json,
         eojeol_cnt,
     }
@@ -1364,19 +1370,29 @@ pub fn parse_learner_xml(
         .map(|m| m.as_str())
         .unwrap_or(&xml_text);
 
-    // 포맷 1: <P> 또는 <SENTENCE> ... <word><w>어절</w><morph pos="품사">형태소</morph></word>
+    // 포맷 1: <SENTENCE> (우선) 또는 <P> ... <MorphemeAnnotations> / <LearnerErrorAnnotations>
     let re_p = Regex::new(r"(?is)<P\b[^>]*>(.*?)</P>").unwrap();
     let re_sentence = Regex::new(r"(?is)<SENTENCE\b[^>]*>(.*?)</SENTENCE>").unwrap();
+    let re_morph_ann = Regex::new(r"(?is)<MorphemeAnnotations\b[^>]*>(.*?)</MorphemeAnnotations>").unwrap();
+    let re_err_ann = Regex::new(r"(?is)<LearnerErrorAnnotations\b[^>]*>(.*?)</LearnerErrorAnnotations>").unwrap();
     let re_word = Regex::new(r"(?is)<word\b[^>]*>(.*?)</word>").unwrap();
     let re_morph = Regex::new(r#"(?is)<morph\b[^>]*pos=["']([^"']*)["'][^>]*>(.*?)</morph>"#).unwrap();
+    let re_morph_block = Regex::new(r"(?is)<morph\b[^>]*>(.*?)</morph>").unwrap();
+    let re_preserved = Regex::new(r"(?is)<Preserved\b[^>]*>(.*?)</Preserved>").unwrap();
+    let re_proofread = Regex::new(r#"(?is)<Proofread\b[^>]*pos=["']([^"']*)["'][^>]*>(.*?)</Proofread>"#).unwrap();
+    let re_proofread_nopos = Regex::new(r"(?is)<Proofread\b[^>]*>(.*?)</Proofread>").unwrap();
+    let re_removed = Regex::new(r"(?is)<Removed\b[^>]*>(.*?)</Removed>").unwrap();
+    let re_err_area = Regex::new(r#"(?is)<ErrorArea\b[^>]*type=["']([^"']*)["'][^>]*/?>"#).unwrap();
+    let re_err_pattern = Regex::new(r#"(?is)<ErrorPattern\b[^>]*type=["']([^"']*)["'][^>]*/?>"#).unwrap();
+    let re_err_level = Regex::new(r#"(?is)<ErrorLevel\b[^>]*type=["']([^"']*)["'][^>]*/?>"#).unwrap();
 
-    let sent_blocks: Vec<&str> = if re_p.is_match(body_text) {
-        re_p.captures_iter(body_text)
+    let sent_blocks: Vec<&str> = if re_sentence.is_match(body_text) {
+        re_sentence
+            .captures_iter(body_text)
             .filter_map(|c| c.get(1).map(|m| m.as_str()))
             .collect()
     } else {
-        re_sentence
-            .captures_iter(body_text)
+        re_p.captures_iter(body_text)
             .filter_map(|c| c.get(1).map(|m| m.as_str()))
             .collect()
     };
@@ -1386,7 +1402,20 @@ pub fn parse_learner_xml(
         let mut morph_flat_parts = Vec::new();
         let mut raw_words = Vec::new();
 
-        for (w_idx, w_cap) in re_word.captures_iter(s_block).enumerate() {
+        // <MorphemeAnnotations>가 있으면 해당 영역에서만 형태소/원문 어절을 추출하여 <LearnerErrorAnnotations>와 중복 방지
+        let morph_scope = re_morph_ann
+            .captures(s_block)
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str())
+            .unwrap_or_else(|| {
+                if re_err_ann.is_match(s_block) {
+                    ""
+                } else {
+                    s_block
+                }
+            });
+
+        for (w_idx, w_cap) in re_word.captures_iter(morph_scope).enumerate() {
             let w_block = w_cap.get(1).map(|m| m.as_str()).unwrap_or("");
             let w_form = extract_tag("w", w_block);
             if w_form.is_empty() {
@@ -1424,8 +1453,174 @@ pub fn parse_learner_xml(
             continue;
         }
 
+        // <LearnerErrorAnnotations> 파싱
+        let mut error_flat_parts = Vec::new();
+        let mut error_word_entries: Vec<Value> = Vec::new();
+        let mut error_replacements: Vec<(String, String)> = Vec::new();
+
+        if let Some(err_cap) = re_err_ann.captures(s_block) {
+            let err_scope = err_cap.get(1).map(|m| m.as_str()).unwrap_or("");
+            for w_cap in re_word.captures_iter(err_scope) {
+                let w_block = w_cap.get(1).map(|m| m.as_str()).unwrap_or("");
+                let w_form = extract_tag("w", w_block);
+                if w_form.is_empty() {
+                    continue;
+                }
+
+                let mut corrected_surface_parts = Vec::new();
+                let mut corrected_morph_parts = Vec::new();
+                let mut word_areas = Vec::new();
+                let mut word_patterns = Vec::new();
+                let mut word_levels = Vec::new();
+                let mut morph_items_json = Vec::new();
+
+                for m_cap in re_morph_block.captures_iter(w_block) {
+                    let m_inner = m_cap.get(1).map(|m| m.as_str()).unwrap_or("");
+                    let mut m_areas = Vec::new();
+                    let mut m_patterns = Vec::new();
+                    let mut m_levels = Vec::new();
+
+                    for c in re_err_area.captures_iter(m_inner) {
+                        let v = c.get(1).map(|m| m.as_str().trim()).unwrap_or("");
+                        if !v.is_empty() {
+                            m_areas.push(v.to_string());
+                            if !word_areas.contains(&v.to_string()) {
+                                word_areas.push(v.to_string());
+                            }
+                        }
+                    }
+                    for c in re_err_pattern.captures_iter(m_inner) {
+                        let v = c.get(1).map(|m| m.as_str().trim()).unwrap_or("");
+                        if !v.is_empty() {
+                            m_patterns.push(v.to_string());
+                            if !word_patterns.contains(&v.to_string()) {
+                                word_patterns.push(v.to_string());
+                            }
+                        }
+                    }
+                    for c in re_err_level.captures_iter(m_inner) {
+                        let v = c.get(1).map(|m| m.as_str().trim()).unwrap_or("");
+                        if !v.is_empty() {
+                            m_levels.push(v.to_string());
+                            if !word_levels.contains(&v.to_string()) {
+                                word_levels.push(v.to_string());
+                            }
+                        }
+                    }
+
+                    if let Some(pc) = re_proofread.captures(m_inner) {
+                        let pos = pc.get(1).map(|m| m.as_str().trim()).unwrap_or("");
+                        let txt = strip_tags(pc.get(2).map(|m| m.as_str()).unwrap_or(""));
+                        if !txt.is_empty() {
+                            corrected_surface_parts.push(txt.clone());
+                            if pos.is_empty() {
+                                corrected_morph_parts.push(txt.clone());
+                            } else {
+                                corrected_morph_parts.push(format!("{}/{}", txt, pos));
+                            }
+                            morph_items_json.push(json!({
+                                "kind": "proofread",
+                                "text": txt,
+                                "pos": pos,
+                                "areas": m_areas,
+                                "patterns": m_patterns,
+                                "levels": m_levels
+                            }));
+                        }
+                    } else if let Some(pc) = re_proofread_nopos.captures(m_inner) {
+                        let txt = strip_tags(pc.get(1).map(|m| m.as_str()).unwrap_or(""));
+                        if !txt.is_empty() {
+                            corrected_surface_parts.push(txt.clone());
+                            corrected_morph_parts.push(txt.clone());
+                            morph_items_json.push(json!({
+                                "kind": "proofread",
+                                "text": txt,
+                                "pos": "",
+                                "areas": m_areas,
+                                "patterns": m_patterns,
+                                "levels": m_levels
+                            }));
+                        }
+                    } else if let Some(prc) = re_preserved.captures(m_inner) {
+                        let txt = strip_tags(prc.get(1).map(|m| m.as_str()).unwrap_or(""));
+                        if !txt.is_empty() {
+                            corrected_surface_parts.push(txt.clone());
+                            corrected_morph_parts.push(txt.clone());
+                            morph_items_json.push(json!({
+                                "kind": "preserved",
+                                "text": txt,
+                                "pos": "",
+                                "areas": m_areas,
+                                "patterns": m_patterns,
+                                "levels": m_levels
+                            }));
+                        }
+                    } else if let Some(rc) = re_removed.captures(m_inner) {
+                        let txt = strip_tags(rc.get(1).map(|m| m.as_str()).unwrap_or(""));
+                        morph_items_json.push(json!({
+                            "kind": "removed",
+                            "text": txt,
+                            "pos": "",
+                            "areas": m_areas,
+                            "patterns": m_patterns,
+                            "levels": m_levels
+                        }));
+                    }
+                }
+
+                let corrected_word = corrected_surface_parts.join("");
+                let corrected_morph = corrected_morph_parts.join("+");
+                let mut tags = Vec::new();
+                tags.extend(word_areas.iter().cloned());
+                tags.extend(word_patterns.iter().cloned());
+                tags.extend(word_levels.iter().cloned());
+
+                let tag_suffix = if tags.is_empty() {
+                    String::new()
+                } else {
+                    format!("[{}]", tags.join("|"))
+                };
+                let rhs = if !corrected_morph.is_empty() {
+                    corrected_morph.clone()
+                } else if !corrected_word.is_empty() {
+                    corrected_word.clone()
+                } else {
+                    "(삭제)".to_string()
+                };
+                error_flat_parts.push(format!("{}->{}{}", w_form, rhs, tag_suffix));
+                error_replacements.push((w_form.clone(), corrected_word.clone()));
+                error_word_entries.push(json!({
+                    "word": w_form,
+                    "corrected": corrected_word,
+                    "areas": word_areas,
+                    "patterns": word_patterns,
+                    "levels": word_levels,
+                    "items": morph_items_json
+                }));
+            }
+        }
+
+        let corrected_sentence = if !error_replacements.is_empty() {
+            let mut cur_words: Vec<String> = raw_s.split_whitespace().map(|s| s.to_string()).collect();
+            let mut search_from = 0usize;
+            for (orig_w, corr_w) in &error_replacements {
+                if let Some(rel_idx) = cur_words[search_from..].iter().position(|w| w == orig_w) {
+                    let idx = search_from + rel_idx;
+                    cur_words[idx] = corr_w.clone();
+                    search_from = idx + 1;
+                }
+            }
+            cur_words
+                .into_iter()
+                .filter(|w| !w.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ")
+        } else {
+            String::new()
+        };
+
         let seq = s_idx + 1;
-        segments.push(make_segment(
+        let mut seg = make_segment(
             seq,
             &format!("{}-S{:03}", doc_id_prefix, seq),
             "main",
@@ -1438,7 +1633,13 @@ pub fn parse_learner_xml(
             Value::Array(words_data.clone()),
             Some(words_data.len().max(1)),
             norm,
-        ));
+        );
+        if !error_flat_parts.is_empty() {
+            seg.error_flat = norm.pua_to_unicode(&error_flat_parts.join(" | "));
+            seg.errors_json = serde_json::to_string(&error_word_entries).unwrap_or_default();
+            seg.corrected_text = norm.pua_to_unicode(&corrected_sentence);
+        }
+        segments.push(seg);
     }
 
     Ok((theme, nat, grade, segments, enc))
@@ -1690,6 +1891,9 @@ pub fn init_db_schema(conn: &Connection) -> Result<(), String> {
             morph_flat TEXT,
             sense_flat TEXT,
             syntax_tree TEXT,
+            error_flat TEXT DEFAULT '',
+            errors_json TEXT DEFAULT '',
+            corrected_text TEXT DEFAULT '',
             eojeols_json TEXT,
             is_modified INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY (doc_id) REFERENCES documents(doc_id)
@@ -1713,8 +1917,15 @@ pub fn init_db_schema(conn: &Connection) -> Result<(), String> {
     .map_err(|e| format!("DB 스키마 초기화 실패: {}", e))?;
     let _ = conn.execute("ALTER TABLE documents ADD COLUMN speaker_info TEXT DEFAULT ''", []);
     let _ = conn.execute("ALTER TABLE documents ADD COLUMN other_meta TEXT DEFAULT ''", []);
+    ensure_error_columns(conn);
 
     Ok(())
+}
+
+pub(crate) fn ensure_error_columns(conn: &Connection) {
+    let _ = conn.execute("ALTER TABLE segments ADD COLUMN error_flat TEXT DEFAULT ''", []);
+    let _ = conn.execute("ALTER TABLE segments ADD COLUMN errors_json TEXT DEFAULT ''", []);
+    let _ = conn.execute("ALTER TABLE segments ADD COLUMN corrected_text TEXT DEFAULT ''", []);
 }
 
 fn collect_corpus_files(folder: &Path) -> Vec<PathBuf> {
@@ -1950,8 +2161,8 @@ pub fn build_paths_into_db_native(
                     "INSERT INTO segments (
                         doc_id, seq_no, sent_id_str, part_type, lang, page_info,
                         text_raw, text_unicode, text_nfd_norm,
-                        morph_flat, sense_flat, syntax_tree, eojeols_json
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                        morph_flat, sense_flat, syntax_tree, error_flat, errors_json, corrected_text, eojeols_json
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
                 )
                 .map_err(|e| e.to_string())?;
 
@@ -1970,6 +2181,9 @@ pub fn build_paths_into_db_native(
                         s.morph_flat,
                         s.sense_flat,
                         s.syntax_tree,
+                        s.error_flat,
+                        s.errors_json,
+                        s.corrected_text,
                         s.eojeols_json
                     ])
                     .map_err(|e| e.to_string())?;
@@ -2226,6 +2440,7 @@ pub fn build_paths_into_db_native(
                 },
             ];
 
+            let has_err = segs.iter().any(|s| !s.error_flat.trim().is_empty());
             let doc = DocumentRecord {
                 doc_id: doc_id.clone(),
                 title: format!(
@@ -2234,8 +2449,16 @@ pub fn build_paths_into_db_native(
                 ),
                 author: format!("{} 학습자 ({})", nat, grade),
                 pub_year: "2020".to_string(),
-                corpus_category: "학습자 말뭉치 (평문+형태 통합)".to_string(),
-                annotation_layers: "평문 + 형태".to_string(),
+                corpus_category: if has_err {
+                    "학습자 오류주석 말뭉치 (평문+형태+오류 통합)".to_string()
+                } else {
+                    "학습자 말뭉치 (평문+형태 통합)".to_string()
+                },
+                annotation_layers: if has_err {
+                    "평문 + 형태 + 오류".to_string()
+                } else {
+                    "평문 + 형태".to_string()
+                },
                 source_files_list: format!("{}, {}", tf_name, xf_name),
                 sentence_count: segs.len(),
                 eojeol_count: ej_sum,
@@ -2355,13 +2578,28 @@ pub fn build_paths_into_db_native(
                 && head_slice.contains("<morph"))
         {
             if let Ok((theme, nat, grade, s, _)) = parse_learner_xml(f, &doc_id, norm) {
+                let has_err = s.iter().any(|x| !x.error_flat.trim().is_empty());
+                let has_m = s.iter().any(|x| !x.morph_flat.trim().is_empty());
                 segs = s;
-                ctype = "형태 분석 말뭉치 (학습자)".to_string();
-                tformat = "LearnerCorpus XML".to_string();
-                raw_desc = "<SENTENCE><s> 및 <word><w> 태그".to_string();
-                ana_desc = "<morph pos=\"...\"> 형태소 주석".to_string();
-                layers = "형태".to_string();
-                title = format!("{} ({} - {}/{})", stem, theme, nat, grade);
+                if has_err {
+                    ctype = "오류 주석 말뭉치 (학습자)".to_string();
+                    tformat = "LearnerCorpus XML (Error)".to_string();
+                    raw_desc = "<SENTENCE><s> 및 <word><w> 태그".to_string();
+                    ana_desc = "<Proofread>, <ErrorArea>, <ErrorPattern>, <ErrorLevel> 오류 주석".to_string();
+                    layers = if has_m {
+                        "형태 + 오류".to_string()
+                    } else {
+                        "오류".to_string()
+                    };
+                    title = format!("{} ({} - {}/{} · 오류주석)", stem, theme, nat, grade);
+                } else {
+                    ctype = "형태 분석 말뭉치 (학습자)".to_string();
+                    tformat = "LearnerCorpus XML".to_string();
+                    raw_desc = "<SENTENCE><s> 및 <word><w> 태그".to_string();
+                    ana_desc = "<morph pos=\"...\"> 형태소 주석".to_string();
+                    layers = "형태".to_string();
+                    title = format!("{} ({} - {}/{})", stem, theme, nat, grade);
+                }
             }
         } else if ext == "json" && head_slice.contains("\"document\"") {
             if let Ok((s, _, has_m)) = parse_nikl_json(f, norm) {
@@ -2499,15 +2737,18 @@ pub fn build_paths_into_db_native(
         let actual_has_morph = segs.iter().any(|s| !s.morph_flat.trim().is_empty());
         let actual_has_sense = segs.iter().any(|s| !s.sense_flat.trim().is_empty());
         let actual_has_syntax = segs.iter().any(|s| !s.syntax_tree.trim().is_empty());
-        let is_raw_only = !actual_has_morph && !actual_has_sense && !actual_has_syntax;
+        let actual_has_error = segs.iter().any(|s| !s.error_flat.trim().is_empty());
+        let is_raw_only = !actual_has_morph && !actual_has_sense && !actual_has_syntax && !actual_has_error;
 
         if is_raw_only {
             if ctype.contains("형태")
                 || ctype.contains("의미")
                 || ctype.contains("구문")
+                || ctype.contains("오류")
                 || layers.contains("형태")
                 || layers.contains("의미")
                 || layers.contains("구문")
+                || layers.contains("오류")
             {
                 ctype = "평문 말뭉치".to_string();
                 layers = "평문".to_string();
@@ -2569,7 +2810,8 @@ pub fn build_paths_into_db_native(
                     "raw_only": is_raw_only,
                     "has_morph": actual_has_morph,
                     "has_sense": actual_has_sense,
-                    "has_syntax": actual_has_syntax
+                    "has_syntax": actual_has_syntax,
+                    "has_error": actual_has_error
                 }));
 
                 let pct = (processed_files_count as f64 / total_files_count as f64) * 100.0;

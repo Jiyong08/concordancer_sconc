@@ -87,7 +87,7 @@
             <!-- 2. 검색방식 -->
             <div class="opt-pill">
               <label for="btn-search-method-trigger">검색방식</label>
-              <button type="button" class="btn-doc-selector-trigger" id="btn-search-method-trigger" title="검색 대상 층위(평문/형태/의미/구문/벡터 중 택1)와 특수 연산 방식(자소/정규식)을 설정합니다.">
+              <button type="button" class="btn-doc-selector-trigger" id="btn-search-method-trigger" title="검색 대상 층위(평문/형태/의미/구문/오류/벡터 중 택1)와 특수 연산 방식(자소/정규식)을 설정합니다.">
                 <span id="search-method-summary-label">평문 · 기본</span> ▾
               </button>
             </div>
@@ -156,6 +156,55 @@
             <button class="btn btn-outline btn-toggle-options-inline" id="btn-toggle-options-inline" type="button" title="맨 위의 헤더와 검색 옵션을 모두 접거나 펼쳐 검색 결과 화면을 최대화합니다.">
               <span id="inline-fold-icon">🔼</span> <span id="inline-fold-text">검색 옵션 접기</span>
             </button>
+          </div>
+
+          <!-- 오류 층위 전용 필터 바 ('오류' 검색 층위 선택 시 자동 표시) -->
+          <div id="error-filter-bar" style="display:none; margin-top:8px; padding:8px 12px; background:#fff7ed; border:1px solid #fdba74; border-radius:6px; align-items:center; gap:10px; flex-wrap:wrap; font-size:0.8rem;">
+            <strong style="color:#9a3412;">🩺 오류 주석 필터:</strong>
+            <label style="display:inline-flex; align-items:center; gap:4px;">
+              <span>오류 범주(Area)</span>
+              <select id="select-error-area" style="padding:3px 6px; border:1px solid #fdba74; border-radius:4px; background:#fff;">
+                <option value="ALL">전체</option>
+                <option value="CNNG">CNNG (일반명사)</option>
+                <option value="CNNP">CNNP (고유명사)</option>
+                <option value="CVV">CVV (동사)</option>
+                <option value="CVA">CVA (형용사)</option>
+                <option value="CMAG">CMAG (부사)</option>
+                <option value="FAP">FAP (부사격조사)</option>
+                <option value="FNP">FNP (주격/목적격조사)</option>
+                <option value="FOP">FOP (보조사)</option>
+                <option value="FED">FED (어미)</option>
+                <option value="FXP">FXP (접사)</option>
+                <option value="FPE">FPE (선어말어미)</option>
+                <option value="FFE">FFE (종결어미)</option>
+                <option value="PE">PE (철자/발음)</option>
+              </select>
+            </label>
+            <label style="display:inline-flex; align-items:center; gap:4px;">
+              <span>오류 양상(Pattern)</span>
+              <select id="select-error-pattern" style="padding:3px 6px; border:1px solid #fdba74; border-radius:4px; background:#fff;">
+                <option value="ALL">전체</option>
+                <option value="REP">REP (대치)</option>
+                <option value="MIF">MIF (오형태)</option>
+                <option value="OM">OM (누락)</option>
+                <option value="ADD">ADD (첨가)</option>
+              </select>
+            </label>
+            <label style="display:inline-flex; align-items:center; gap:4px;">
+              <span>오류 층위(Level)</span>
+              <select id="select-error-level" style="padding:3px 6px; border:1px solid #fdba74; border-radius:4px; background:#fff;">
+                <option value="ALL">전체</option>
+                <option value="PP">PP</option>
+                <option value="DS">DS</option>
+                <option value="MCJ">MCJ</option>
+                <option value="ST">ST</option>
+                <option value="MDV">MDV</option>
+                <option value="MDC">MDC</option>
+                <option value="POS">POS</option>
+                <option value="SP">SP</option>
+              </select>
+            </label>
+            <span style="color:#7c2d12; font-size:0.75rem;">💡 교정 쌍 검색: <code>주장-&gt;입장</code>, <code>에서-&gt;에</code>, <code>-&gt;/JKB</code> (또는 빈 검색어로 필터만 조회)</span>
           </div>
 
           <!-- 선택형 소형 옛글 낱자판 (기본값: 숨김) -->
@@ -520,6 +569,11 @@
                       <td><code>NP_SBJ</code>, <code>VP_MOD</code>, <code>NP_OBJ</code></td>
                     </tr>
                     <tr>
+                      <td><strong>오류</strong></td>
+                      <td>학습자 <strong>오류</strong> 주석 말뭉치에서 원어절·교정어절(<code>-&gt;</code>)·오류 코드(<code>CNNG</code>, <code>REP</code>, <code>OM</code> 등)를 검색합니다.</td>
+                      <td><code>주장-&gt;입장</code>, <code>에서-&gt;에</code>, <code>CNNG</code></td>
+                    </tr>
+                    <tr>
                       <td><strong>벡터</strong></td>
                       <td>워드 임베딩이 포함된 <strong>벡터</strong> 말뭉치 전용 검색 층위입니다. (추후 지원)</td>
                       <td><code>벡터 임베딩 유사어</code></td>
@@ -752,7 +806,7 @@
                 <span>📂 1. 검색 대상 층위 (단일 선택)</span>
               </div>
             </div>
-            <p class="method-section-desc">5개의 층위 중 하나를 선택합니다. <strong>평문</strong>은 평문 DB, <strong>형태·의미·구문·벡터</strong>는 해당 분석 표지가 있는 DB에서만 검색이 이루어집니다.</p>
+            <p class="method-section-desc">6개의 층위 중 하나를 선택합니다. <strong>평문</strong>은 평문 DB, <strong>형태·의미·구문·오류·벡터</strong>는 해당 표지가 있는 DB에서만 검색이 이루어집니다.</p>
             <div class="method-item-list">
               <label class="method-item-label">
                 <input type="radio" name="search-target-layer" id="chk-target-surface" value="surface" checked />
@@ -780,6 +834,13 @@
                 <div class="method-item-text">
                   <strong>구문 (syntax)</strong>
                   <span>구문 분석 말뭉치 전용 트리 및 구문 범주 태그 검색 (예: NP_SBJ, VP)</span>
+                </div>
+              </label>
+              <label class="method-item-label">
+                <input type="radio" name="search-target-layer" id="chk-target-error" value="error" />
+                <div class="method-item-text">
+                  <strong>오류 (error)</strong>
+                  <span>학습자 오류주석 말뭉치 전용 오류·교정 쌍(<code>-&gt;</code>)·오류 코드 검색 (예: 주장-&gt;입장, CNNG, REP)</span>
                 </div>
               </label>
               <label class="method-item-label">

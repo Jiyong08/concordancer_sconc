@@ -115,12 +115,14 @@ pub(crate) fn handle_segment_detail(
         Ok(c) => c,
         Err(e) => return json_response(&serde_json::json!({ "error": e.to_string() }), 500),
     };
+    crate::builder::ensure_error_columns(&conn);
 
     let row_res = conn.query_row(
         "SELECT s.segment_id, s.doc_id, d.title, d.corpus_category, d.annotation_layers, d.source_files_list,
                 s.seq_no, COALESCE(s.sent_id_str, ''), '', COALESCE(s.page_info, ''), COALESCE(s.lang, 'kor'), COALESCE(s.part_type, ''),
                 s.text_raw, s.text_unicode, COALESCE(s.morph_flat, ''), COALESCE(s.sense_flat, ''), COALESCE(s.syntax_tree, ''),
-                COALESCE(s.eojeols_json, '[]'), '{}'
+                COALESCE(s.eojeols_json, '[]'), '{}',
+                COALESCE(s.error_flat, ''), COALESCE(s.errors_json, '[]'), COALESCE(s.corrected_text, '')
          FROM segments s
          JOIN documents d ON s.doc_id = d.doc_id
          WHERE s.segment_id = ?",
@@ -146,6 +148,9 @@ pub(crate) fn handle_segment_detail(
                 row.get::<_, String>(16).unwrap_or_default(),
                 row.get::<_, String>(17).unwrap_or_else(|_| "[]".to_string()),
                 row.get::<_, String>(18).unwrap_or_else(|_| "{}".to_string()),
+                row.get::<_, String>(19).unwrap_or_default(),
+                row.get::<_, String>(20).unwrap_or_else(|_| "[]".to_string()),
+                row.get::<_, String>(21).unwrap_or_default(),
             ))
         },
     );
@@ -170,6 +175,9 @@ pub(crate) fn handle_segment_detail(
         syntax_tree,
         eojeols_str,
         meta_str,
+        error_flat,
+        errors_str,
+        corrected_text,
     ) = match row_res {
         Ok(r) => r,
         Err(e) => return json_response(&serde_json::json!({ "error": e.to_string() }), 404),
@@ -227,6 +235,7 @@ pub(crate) fn handle_segment_detail(
         }
     }
 
+    let errors_val: serde_json::Value = serde_json::from_str(&errors_str).unwrap_or_else(|_| serde_json::json!([]));
     let resp = SegmentDetailResponse {
         segment_id,
         doc_id,
@@ -246,6 +255,9 @@ pub(crate) fn handle_segment_detail(
         morph_flat,
         sense_flat,
         syntax_tree,
+        error_flat,
+        errors: errors_val,
+        corrected_text,
         eojeols,
         meta,
         neighbors,

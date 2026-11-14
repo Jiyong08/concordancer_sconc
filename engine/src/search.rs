@@ -602,6 +602,7 @@ pub(crate) struct SearchQueryContext<'a> {
     pub(crate) use_morph: bool,
     pub(crate) use_sense: bool,
     pub(crate) use_syntax: bool,
+    pub(crate) use_error: bool,
     pub(crate) use_text: bool,
     pub(crate) use_jamo: bool,
     pub(crate) use_regex: bool,
@@ -823,6 +824,113 @@ pub(crate) fn match_analysis_layer(
     None
 }
 
+pub(crate) fn match_error_layer(
+    state: &AppState,
+    qctx: &SearchQueryContext,
+    display_text: &str,
+    error_flat: &str,
+) -> Option<(usize, usize, &'static str)> {
+    if error_flat.is_empty() {
+        return None;
+    }
+
+    let entries: Vec<&str> = error_flat.split(" | ").filter(|s| !s.is_empty()).collect();
+    if entries.is_empty() {
+        return None;
+    }
+
+    let word_spans = compute_display_word_spans(display_text);
+    let find_orig_span = |entry: &str| -> (usize, usize) {
+        let orig_word = entry.split("->").next().unwrap_or("").trim();
+        if !orig_word.is_empty() {
+            for &(sc, ec, w_str) in &word_spans {
+                let (w_clean, _) = strip_leading_surface_quotes(w_str);
+                if w_str == orig_word || w_clean == orig_word || w_str.contains(orig_word) {
+                    return (sc, ec);
+                }
+            }
+            if let Some(byte_pos) = display_text.find(orig_word) {
+                let sc = display_text[..byte_pos].chars().count();
+                let ec = sc + orig_word.chars().count();
+                return (sc, ec);
+            }
+        }
+        if let Some(&(sc, ec, _)) = word_spans.first() {
+            (sc, ec)
+        } else {
+            (0, display_text.chars().count().min(6).max(1))
+        }
+    };
+
+    // 교정 쌍 문법 ('->' 또는 '→') 지원: 예) "주장->입장", "에서->에", "->/JKB"
+    let normalized_arrow = qctx.core_query.replace('→', "->");
+    if !qctx.use_regex && qctx.bracket_tokens.is_none() && normalized_arrow.contains("->") {
+        let mut parts = normalized_arrow.splitn(2, "->");
+        let lhs = parts.next().unwrap_or("").trim();
+        let rhs = parts.next().unwrap_or("").trim();
+        for entry in &entries {
+            if let Some(arrow_pos) = entry.find("->") {
+                let e_lhs = &entry[..arrow_pos];
+                let e_rhs = &entry[arrow_pos + 2..];
+                let lhs_ok = lhs.is_empty() || e_lhs.contains(lhs);
+                let rhs_ok = rhs.is_empty() || e_rhs.contains(rhs);
+                if lhs_ok && rhs_ok {
+                    let (sc, ec) = find_orig_span(entry);
+                    return Some((sc, ec, "오류/교정쌍"));
+                }
+            }
+        }
+        return None;
+    }
+
+    if qctx.use_regex {
+        if let Some(re) = qctx.compiled_regex {
+            for entry in &entries {
+                let compat = state.normalizer.normalize_morph_for_regex(entry);
+                if re.is_match(&compat) || re.is_match(entry) {
+                    let (sc, ec) = find_orig_span(entry);
+                    return Some((sc, ec, "오류/정규식"));
+                }
+            }
+        }
+        return None;
+    }
+
+    if (qctx.use_jamo || qctx.bracket_tokens.is_some()) && !qctx.use_regex {
+        if let Some(b_tokens) = qctx.bracket_tokens {
+            for entry in &entries {
+                let compat = state.normalizer.normalize_morph_for_regex(entry);
+                let units = state.normalizer.tokenize_text_units(&compat);
+                if find_bracket_query_match(b_tokens, &units).is_some() {
+                    let (sc, ec) = find_orig_span(entry);
+                    return Some((sc, ec, "오류/자소"));
+                }
+            }
+        }
+        return None;
+    }
+
+    // 기본 텍스트/코드 매칭
+    for entry in &entries {
+        if entry.contains(qctx.core_query) {
+            let (sc, ec) = find_orig_span(entry);
+            return Some((sc, ec, "오류"));
+        }
+        let compat = state.normalizer.normalize_morph_for_regex(entry);
+        if compat.contains(qctx.core_query)
+            || state
+                .normalizer
+                .normalize_morph_str(entry)
+                .contains(qctx.norm_morph_query)
+        {
+            let (sc, ec) = find_orig_span(entry);
+            return Some((sc, ec, "오류"));
+        }
+    }
+
+    None
+}
+
 pub(crate) fn evaluate_segment_match(
     state: &AppState,
     qctx: &SearchQueryContext,
@@ -832,6 +940,7 @@ pub(crate) fn evaluate_segment_match(
     morph_flat: &str,
     sense_flat: &str,
     syntax_tree: &str,
+    error_flat: &str,
 ) -> Option<(usize, usize, &'static str)> {
     let req_start = qctx.req_eojeol_start && qctx.search_unit != "text";
 
@@ -1063,6 +1172,13 @@ pub(crate) fn evaluate_segment_match(
         }
     }
 
+    // 5. Error annotation layer matching
+    if qctx.use_error && !error_flat.is_empty() {
+        if let Some(res) = match_error_layer(state, qctx, display_text, error_flat) {
+            return Some(res);
+        }
+    }
+
     None
 }
 
@@ -1141,6 +1257,7 @@ pub(crate) fn evaluate_cross_sentence_match(
         &comb_morph,
         &comb_sense,
         &comb_syntax,
+        "",
     ) {
         if sc < cur_char_len && ec > cur_char_len {
             return Some((comb_display, sc, ec, lbl));
@@ -1224,11 +1341,12 @@ pub(crate) fn handle_search(
     let methods_param = params.get("methods").map(|s| s.as_str()).unwrap_or("");
     let mode = params.get("mode").map(|s| s.as_str()).unwrap_or("surface");
 
-    // Target layers: single layer by default (surface: 평문, morph: 형태, sense: 의미, syntax: 구문, vector: 벡터)
+    // Target layers: single layer by default (surface: 평문, morph: 형태, sense: 의미, syntax: 구문, error: 오류, vector: 벡터)
     let mut use_surface = false;
     let mut use_morph = false;
     let mut use_sense = false;
     let mut use_syntax = false;
+    let mut use_error = false;
     let mut use_vector = false;
 
     if !targets_param.is_empty() {
@@ -1238,12 +1356,14 @@ pub(crate) fn handle_search(
                 "morph" => use_morph = true,
                 "sense" => use_sense = true,
                 "syntax" => use_syntax = true,
+                "error" => use_error = true,
                 "vector" => use_vector = true,
                 "all" => {
                     use_surface = true;
                     use_morph = true;
                     use_sense = true;
                     use_syntax = true;
+                    use_error = true;
                 }
                 _ => {}
             }
@@ -1253,6 +1373,7 @@ pub(crate) fn handle_search(
             "morph" => use_morph = true,
             "sense" => use_sense = true,
             "syntax" => use_syntax = true,
+            "error" => use_error = true,
             "vector" => use_vector = true,
             _ => use_surface = true,
         }
@@ -1289,7 +1410,7 @@ pub(crate) fn handle_search(
         use_regex = true;
     }
 
-    if !use_surface && !use_morph && !use_sense && !use_syntax && !use_vector {
+    if !use_surface && !use_morph && !use_sense && !use_syntax && !use_error && !use_vector {
         use_surface = true;
     }
     if !use_text && !use_jamo && !use_regex {
@@ -1366,6 +1487,7 @@ pub(crate) fn handle_search(
         Err(e) => return json_response(&serde_json::json!({ "error": e.to_string() }), 500),
     };
     state.memory_profile.apply_pragmas(&conn);
+    crate::builder::ensure_error_columns(&conn);
 
     let (compiled_regex, anchored_regex) = if (use_regex || mode == "regex") && !core_query.is_empty() {
         let expanded_regex_str = expand_bracket_syntax_to_regex(core_query);
@@ -1445,8 +1567,8 @@ pub(crate) fn handle_search(
         }
     }
 
-    // 검색 대상 층위(평문, 형태, 의미, 구문, 벡터)에 해당하는 표지를 가진 말뭉치 문서들로만 엄격 제한
-    if use_surface || use_morph || use_sense || use_syntax || use_vector {
+    // 검색 대상 층위(평문, 형태, 의미, 구문, 오류, 벡터)에 해당하는 표지를 가진 말뭉치 문서들로만 엄격 제한
+    if use_surface || use_morph || use_sense || use_syntax || use_error || use_vector {
         let layer_matched_ids: Vec<String> = doc_meta_map
             .iter()
             .filter(|(_, meta)| {
@@ -1459,12 +1581,14 @@ pub(crate) fn handle_search(
                 let has_morph = meta.layers.contains("형태") || meta.category.contains("형태");
                 let has_sense = meta.layers.contains("의미") || meta.category.contains("의미");
                 let has_syntax = meta.layers.contains("구문") || meta.category.contains("구문");
+                let has_error = meta.layers.contains("오류") || meta.category.contains("오류");
                 let has_vector = meta.layers.contains("벡터") || meta.category.contains("벡터");
 
                 (use_surface && has_plain)
                     || (use_morph && has_morph)
                     || (use_sense && has_sense)
                     || (use_syntax && has_syntax)
+                    || (use_error && has_error)
                     || (use_vector && has_vector)
             })
             .map(|(id, _)| id.clone())
@@ -1487,7 +1611,8 @@ pub(crate) fn handle_search(
         "SELECT s.segment_id, s.doc_id, s.seq_no,
                 COALESCE(s.sent_id_str, ''), COALESCE(s.page_info, ''), '', COALESCE(s.lang, 'kor'), COALESCE(s.part_type, ''),
                 s.text_raw, s.text_unicode, s.text_nfd_norm,
-                COALESCE(s.morph_flat, ''), COALESCE(s.sense_flat, ''), COALESCE(s.syntax_tree, '')
+                COALESCE(s.morph_flat, ''), COALESCE(s.sense_flat, ''), COALESCE(s.syntax_tree, ''),
+                COALESCE(s.error_flat, ''), COALESCE(s.errors_json, ''), COALESCE(s.corrected_text, '')
          FROM segments s
          WHERE 1=1",
     );
@@ -1513,8 +1638,29 @@ pub(crate) fn handle_search(
         if use_syntax {
             target_filters.push("COALESCE(s.syntax_tree, '') != ''");
         }
+        if use_error {
+            target_filters.push("COALESCE(s.error_flat, '') != ''");
+        }
         if !target_filters.is_empty() {
             sql.push_str(&format!(" AND ({})", target_filters.join(" OR ")));
+        }
+    }
+
+    let err_area = params.get("error_area").map(|s| s.trim()).unwrap_or("");
+    let err_pattern = params.get("error_pattern").map(|s| s.trim()).unwrap_or("");
+    let err_level = params.get("error_level").map(|s| s.trim()).unwrap_or("");
+    if use_error {
+        if !err_area.is_empty() && err_area != "ALL" {
+            sql.push_str(" AND COALESCE(s.error_flat, '') LIKE ?");
+            sql_params.push(format!("%{}%", err_area));
+        }
+        if !err_pattern.is_empty() && err_pattern != "ALL" {
+            sql.push_str(" AND COALESCE(s.error_flat, '') LIKE ?");
+            sql_params.push(format!("%{}%", err_pattern));
+        }
+        if !err_level.is_empty() && err_level != "ALL" {
+            sql.push_str(" AND COALESCE(s.error_flat, '') LIKE ?");
+            sql_params.push(format!("%{}%", err_level));
         }
     }
 
@@ -1552,6 +1698,7 @@ pub(crate) fn handle_search(
         && !use_morph
         && !use_sense
         && !use_syntax
+        && !use_error
         && !use_vector
     {
         let like_tok = if search_unit == "text" && core_query.contains(' ') {
@@ -1607,6 +1754,7 @@ pub(crate) fn handle_search(
         use_morph,
         use_sense,
         use_syntax,
+        use_error,
         use_text,
         use_jamo,
         use_regex,
@@ -1633,6 +1781,9 @@ pub(crate) fn handle_search(
             row.get::<_, String>(11).unwrap_or_default(),
             row.get::<_, String>(12).unwrap_or_default(),
             row.get::<_, String>(13).unwrap_or_default(),
+            row.get::<_, String>(14).unwrap_or_default(),
+            row.get::<_, String>(15).unwrap_or_default(),
+            row.get::<_, String>(16).unwrap_or_default(),
         ))
     });
 
@@ -1661,6 +1812,9 @@ pub(crate) fn handle_search(
                 morph_flat,
                 sense_flat,
                 syntax_tree,
+                error_flat,
+                errors_json,
+                corrected_text,
             ) = item;
 
             let display_text = state
@@ -1706,6 +1860,8 @@ pub(crate) fn handle_search(
                         "의미 열람"
                     } else if !use_surface && use_syntax {
                         "구문 열람"
+                    } else if !use_surface && use_error {
+                        "오류 열람"
                     } else if !use_surface && use_vector {
                         "벡터 열람"
                     } else {
@@ -1731,9 +1887,13 @@ pub(crate) fn handle_search(
                         has_morph: !morph_flat.is_empty(),
                         has_sense: !sense_flat.is_empty(),
                         has_syntax: !syntax_tree.is_empty(),
+                        has_error: !error_flat.is_empty(),
                         morph_flat,
                         sense_flat,
                         syntax_tree,
+                        error_flat,
+                        errors_json,
+                        corrected_text,
                         match_layer: browse_layer.to_string(),
                     });
                 }
@@ -1749,6 +1909,7 @@ pub(crate) fn handle_search(
                 &morph_flat,
                 &sense_flat,
                 &syntax_tree,
+                &error_flat,
             )
             .map(|(sc, ec, lbl)| (display_text.clone(), sc, ec, lbl));
 
@@ -1815,9 +1976,13 @@ pub(crate) fn handle_search(
                         has_morph: !morph_flat.is_empty(),
                         has_sense: !sense_flat.is_empty(),
                         has_syntax: !syntax_tree.is_empty(),
+                        has_error: !error_flat.is_empty(),
                         morph_flat,
                         sense_flat,
                         syntax_tree,
+                        error_flat,
+                        errors_json,
+                        corrected_text,
                         match_layer: layer_name.to_string(),
                     });
                 }
@@ -1885,6 +2050,7 @@ pub(crate) fn handle_search_stream(
         let mut use_morph = false;
         let mut use_sense = false;
         let mut use_syntax = false;
+        let mut use_error = false;
         let mut use_vector = false;
 
         if !targets_param.is_empty() {
@@ -1894,12 +2060,14 @@ pub(crate) fn handle_search_stream(
                     "morph" => use_morph = true,
                     "sense" => use_sense = true,
                     "syntax" => use_syntax = true,
+                    "error" => use_error = true,
                     "vector" => use_vector = true,
                     "all" => {
                         use_surface = true;
                         use_morph = true;
                         use_sense = true;
                         use_syntax = true;
+                        use_error = true;
                     }
                     _ => {}
                 }
@@ -1909,6 +2077,7 @@ pub(crate) fn handle_search_stream(
                 "morph" => use_morph = true,
                 "sense" => use_sense = true,
                 "syntax" => use_syntax = true,
+                "error" => use_error = true,
                 "vector" => use_vector = true,
                 _ => use_surface = true,
             }
@@ -1944,7 +2113,7 @@ pub(crate) fn handle_search_stream(
             use_regex = true;
         }
 
-        if !use_surface && !use_morph && !use_sense && !use_syntax && !use_vector {
+        if !use_surface && !use_morph && !use_sense && !use_syntax && !use_error && !use_vector {
             use_surface = true;
         }
         if !use_text && !use_jamo && !use_regex {
@@ -1999,6 +2168,7 @@ pub(crate) fn handle_search_stream(
             }
         };
         state_worker.memory_profile.apply_pragmas(&conn);
+        crate::builder::ensure_error_columns(&conn);
 
         let (compiled_regex, anchored_regex) = if (use_regex || mode == "regex") && !core_query.is_empty() {
             let expanded_regex_str = expand_bracket_syntax_to_regex(core_query);
@@ -2066,8 +2236,8 @@ pub(crate) fn handle_search_stream(
             }
         }
 
-        // 검색 대상 층위(평문, 형태, 의미, 구문, 벡터)에 해당하는 표지를 가진 말뭉치 문서들로만 엄격 제한
-        if use_surface || use_morph || use_sense || use_syntax || use_vector {
+        // 검색 대상 층위(평문, 형태, 의미, 구문, 오류, 벡터)에 해당하는 표지를 가진 말뭉치 문서들로만 엄격 제한
+        if use_surface || use_morph || use_sense || use_syntax || use_error || use_vector {
             let layer_matched_ids: Vec<String> = doc_meta_map
                 .iter()
                 .filter(|(_, meta)| {
@@ -2080,12 +2250,14 @@ pub(crate) fn handle_search_stream(
                     let has_morph = meta.layers.contains("형태") || meta.category.contains("형태");
                     let has_sense = meta.layers.contains("의미") || meta.category.contains("의미");
                     let has_syntax = meta.layers.contains("구문") || meta.category.contains("구문");
+                    let has_error = meta.layers.contains("오류") || meta.category.contains("오류");
                     let has_vector = meta.layers.contains("벡터") || meta.category.contains("벡터");
 
                     (use_surface && has_plain)
                         || (use_morph && has_morph)
                         || (use_sense && has_sense)
                         || (use_syntax && has_syntax)
+                        || (use_error && has_error)
                         || (use_vector && has_vector)
                 })
                 .map(|(id, _)| id.clone())
@@ -2108,7 +2280,8 @@ pub(crate) fn handle_search_stream(
             "SELECT s.segment_id, s.doc_id, s.seq_no,
                     COALESCE(s.sent_id_str, ''), COALESCE(s.page_info, ''), '', COALESCE(s.lang, 'kor'), COALESCE(s.part_type, ''),
                     s.text_raw, s.text_unicode, s.text_nfd_norm,
-                    COALESCE(s.morph_flat, ''), COALESCE(s.sense_flat, ''), COALESCE(s.syntax_tree, '')
+                    COALESCE(s.morph_flat, ''), COALESCE(s.sense_flat, ''), COALESCE(s.syntax_tree, ''),
+                    COALESCE(s.error_flat, ''), COALESCE(s.errors_json, ''), COALESCE(s.corrected_text, '')
              FROM segments s
              WHERE 1=1",
         );
@@ -2133,8 +2306,29 @@ pub(crate) fn handle_search_stream(
             if use_syntax {
                 target_filters.push("COALESCE(s.syntax_tree, '') != ''");
             }
+            if use_error {
+                target_filters.push("COALESCE(s.error_flat, '') != ''");
+            }
             if !target_filters.is_empty() {
                 sql.push_str(&format!(" AND ({})", target_filters.join(" OR ")));
+            }
+        }
+
+        let err_area = params_worker.get("error_area").map(|s| s.trim()).unwrap_or("");
+        let err_pattern = params_worker.get("error_pattern").map(|s| s.trim()).unwrap_or("");
+        let err_level = params_worker.get("error_level").map(|s| s.trim()).unwrap_or("");
+        if use_error {
+            if !err_area.is_empty() && err_area != "ALL" {
+                sql.push_str(" AND COALESCE(s.error_flat, '') LIKE ?");
+                sql_params.push(format!("%{}%", err_area));
+            }
+            if !err_pattern.is_empty() && err_pattern != "ALL" {
+                sql.push_str(" AND COALESCE(s.error_flat, '') LIKE ?");
+                sql_params.push(format!("%{}%", err_pattern));
+            }
+            if !err_level.is_empty() && err_level != "ALL" {
+                sql.push_str(" AND COALESCE(s.error_flat, '') LIKE ?");
+                sql_params.push(format!("%{}%", err_level));
             }
         }
 
@@ -2224,6 +2418,7 @@ pub(crate) fn handle_search_stream(
             use_morph,
             use_sense,
             use_syntax,
+            use_error,
             use_text,
             use_jamo,
             use_regex,
@@ -2250,6 +2445,9 @@ pub(crate) fn handle_search_stream(
                 row.get::<_, String>(11).unwrap_or_default(),
                 row.get::<_, String>(12).unwrap_or_default(),
                 row.get::<_, String>(13).unwrap_or_default(),
+                row.get::<_, String>(14).unwrap_or_default(),
+                row.get::<_, String>(15).unwrap_or_default(),
+                row.get::<_, String>(16).unwrap_or_default(),
             ))
         });
 
@@ -2278,6 +2476,9 @@ pub(crate) fn handle_search_stream(
                     morph_flat,
                     sense_flat,
                     syntax_tree,
+                    error_flat,
+                    errors_json,
+                    corrected_text,
                 ) = item;
 
                 let display_text = state_worker
@@ -2324,6 +2525,8 @@ pub(crate) fn handle_search_stream(
                         "의미 열람"
                     } else if !use_surface && use_syntax {
                         "구문 열람"
+                    } else if !use_surface && use_error {
+                        "오류 열람"
                     } else if !use_surface && use_vector {
                         "벡터 열람"
                     } else {
@@ -2349,9 +2552,13 @@ pub(crate) fn handle_search_stream(
                         has_morph: !morph_flat.is_empty(),
                         has_sense: !sense_flat.is_empty(),
                         has_syntax: !syntax_tree.is_empty(),
+                        has_error: !error_flat.is_empty(),
                         morph_flat,
                         sense_flat,
                         syntax_tree,
+                        error_flat,
+                        errors_json,
+                        corrected_text,
                         match_layer: browse_layer.to_string(),
                     };
 
@@ -2379,6 +2586,7 @@ pub(crate) fn handle_search_stream(
                     &morph_flat,
                     &sense_flat,
                     &syntax_tree,
+                    &error_flat,
                 )
                 .map(|(sc, ec, lbl)| (display_text.clone(), sc, ec, lbl));
 
@@ -2447,9 +2655,13 @@ pub(crate) fn handle_search_stream(
                         has_morph: !morph_flat.is_empty(),
                         has_sense: !sense_flat.is_empty(),
                         has_syntax: !syntax_tree.is_empty(),
+                        has_error: !error_flat.is_empty(),
                         morph_flat,
                         sense_flat,
                         syntax_tree,
+                        error_flat,
+                        errors_json,
+                        corrected_text,
                         match_layer: layer_name.to_string(),
                     };
 

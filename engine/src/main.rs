@@ -610,6 +610,7 @@ mod tests {
             use_morph: true,
             use_sense: false,
             use_syntax: false,
+            use_error: false,
             use_text: false,
             use_jamo: true,
             use_regex: true,
@@ -642,6 +643,7 @@ mod tests {
                         disp_false,
                         morph_false,
                         "",
+                        "",
                         ""
                     )
                     .is_none(),
@@ -664,6 +666,7 @@ mod tests {
             morph_true_ej,
             "",
             "",
+            "",
         );
         assert!(m_ej.is_some(), "'하늘이[하늘/NNG+이/JKS]' should match in eojeol mode");
         let (sc, ec, _) = m_ej.unwrap();
@@ -684,6 +687,7 @@ mod tests {
                 disp_cross_ej,
                 morph_cross_ej,
                 "",
+                "",
                 ""
             )
             .is_none(),
@@ -696,6 +700,7 @@ mod tests {
             disp_cross_ej,
             disp_cross_ej,
             morph_cross_ej,
+            "",
             "",
             "",
         );
@@ -719,6 +724,7 @@ mod tests {
                 disp_mid,
                 morph_mid,
                 "",
+                "",
                 ""
             )
             .is_none(),
@@ -731,6 +737,7 @@ mod tests {
             disp_mid,
             disp_mid,
             morph_mid,
+            "",
             "",
             "",
         );
@@ -998,6 +1005,134 @@ mod tests {
             "형태 전용 DB는 형태 검색 시 검색되어야 함 (got: {})",
             json_morph
         );
+
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn test_error_annotated_corpus_build_and_search() {
+        use crate::builder::build_paths_into_db_native;
+        use crate::normalizer::Normalizer;
+        use crate::search::handle_search;
+        use crate::DbBuildManager;
+        use rusqlite::Connection;
+        use std::collections::HashMap;
+        use std::sync::{Arc, Mutex};
+
+        let tmp_dir = std::env::temp_dir().join(format!(
+            "sconc_error_corpus_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+
+        let xml_path = tmp_dir.join("sample_error_643.xml");
+        std::fs::write(
+            &xml_path,
+            r#"<?xml version="1.0" encoding="utf-8"?>
+<Korean_Learners_Corpus>
+  <Header>
+    <AssignmentTheme>주장</AssignmentTheme>
+    <DataGrade>4급</DataGrade>
+    <Nationality>중국</Nationality>
+  </Header>
+  <BODY>
+    <P>
+      <SENTENCE from="0" to="26">
+        <s>최저임금제 설정에 대한 내 주장은 찬성이다.</s>
+        <MorphemeAnnotations>
+          <word><w>최저임금제</w><morph pos="NNG">최저</morph><morph pos="NNG">임금</morph><morph pos="XSN">제</morph></word>
+          <word><w>설정에</w><morph pos="NNG">설정</morph><morph pos="JKB">에</morph></word>
+          <word><w>대한</w><morph pos="VV">대하</morph><morph pos="ETM">ㄴ</morph></word>
+          <word><w>내</w><morph pos="NP">나</morph><morph pos="JKG">의</morph></word>
+          <word><w>주장은</w><morph pos="NNG">주장</morph><morph pos="JX">은</morph></word>
+          <word><w>찬성이다.</w><morph pos="NNG">찬성</morph><morph pos="VCP">이</morph><morph pos="EF">다</morph><morph pos="SF">.</morph></word>
+        </MorphemeAnnotations>
+        <LearnerErrorAnnotations>
+          <word>
+            <w>주장은</w>
+            <morph from="15" to="18" subsequence="1" wordStart="Start">
+              <Proofread pos="NNG">입장</Proofread>
+              <ErrorArea type="CNNG" />
+              <ErrorPattern type="REP" />
+            </morph>
+            <morph from="15" to="18" subsequence="2" wordStart="None">
+              <Preserved>은</Preserved>
+            </morph>
+          </word>
+        </LearnerErrorAnnotations>
+      </SENTENCE>
+    </P>
+  </BODY>
+</Korean_Learners_Corpus>"#,
+        )
+        .unwrap();
+
+        let db_path = tmp_dir.join("test_error.corpdb");
+        let norm = Normalizer::new(&tmp_dir.join("nonexistent_pua.json"));
+        let mgr = Arc::new(Mutex::new(DbBuildManager::new()));
+        mgr.lock().unwrap().progress.is_running = true;
+
+        build_paths_into_db_native(&[xml_path], &db_path, &norm, &mgr).unwrap();
+
+        let conn = Connection::open(&db_path).unwrap();
+        let (layers, text_u, error_flat, corrected): (String, String, String, String) = conn
+            .query_row(
+                "SELECT d.annotation_layers, s.text_unicode, s.error_flat, s.corrected_text
+                 FROM segments s JOIN documents d ON s.doc_id = d.doc_id LIMIT 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(layers, "형태 + 오류");
+        assert_eq!(text_u, "최저임금제 설정에 대한 내 주장은 찬성이다.");
+        assert!(error_flat.contains("주장은->입장/NNG+은[CNNG|REP]"), "got: {}", error_flat);
+        assert_eq!(corrected, "최저임금제 설정에 대한 내 입장은 찬성이다.");
+
+        let state = AppState {
+            db_path: db_path.clone(),
+            web_dir: PathBuf::from("../web"),
+            root_dir: tmp_dir.clone(),
+            hanbatang_path: PathBuf::from(""),
+            kopub_ttf_path: PathBuf::from(""),
+            kopub_otf_path: PathBuf::from(""),
+            normalizer: norm,
+            memory_profile: MemoryProfile::detect(),
+            latest_search_seq: AtomicU64::new(0),
+            cancel_search_seq: AtomicU64::new(0),
+            db_builder: mgr,
+            last_pick_folder: Arc::new(Mutex::new(None)),
+            port: 8787,
+        };
+
+        // 1. 교정 쌍('->') 검색
+        let mut p_pair = HashMap::new();
+        p_pair.insert("q".to_string(), "주장->입장".to_string());
+        p_pair.insert("targets".to_string(), "error".to_string());
+        let res_pair = handle_search(&state, &p_pair);
+        let json_pair: serde_json::Value = serde_json::from_slice(res_pair.body()).unwrap();
+        assert_eq!(json_pair["hits"].as_array().map(|a| a.len()), Some(1));
+        assert_eq!(json_pair["hits"][0]["node"].as_str(), Some("주장은"));
+
+        // 2. 오류 코드 필터 + 빈 검색어 열람
+        let mut p_filter = HashMap::new();
+        p_filter.insert("q".to_string(), "".to_string());
+        p_filter.insert("targets".to_string(), "error".to_string());
+        p_filter.insert("error_area".to_string(), "CNNG".to_string());
+        p_filter.insert("error_pattern".to_string(), "REP".to_string());
+        let res_filter = handle_search(&state, &p_filter);
+        let json_filter: serde_json::Value = serde_json::from_slice(res_filter.body()).unwrap();
+        assert_eq!(json_filter["hits"].as_array().map(|a| a.len()), Some(1));
+
+        // 3. 평문 검색에서는 제외되어야 함
+        let mut p_plain = HashMap::new();
+        p_plain.insert("q".to_string(), "찬성".to_string());
+        p_plain.insert("targets".to_string(), "surface".to_string());
+        let res_plain = handle_search(&state, &p_plain);
+        let json_plain: serde_json::Value = serde_json::from_slice(res_plain.body()).unwrap();
+        assert_eq!(json_plain["hits"].as_array().map(|a| a.len()), Some(0));
 
         let _ = std::fs::remove_dir_all(&tmp_dir);
     }

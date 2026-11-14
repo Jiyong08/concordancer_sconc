@@ -165,9 +165,13 @@ pub(crate) struct SearchHit {
     pub(crate) morph_flat: String,
     pub(crate) sense_flat: String,
     pub(crate) syntax_tree: String,
+    pub(crate) error_flat: String,
+    pub(crate) errors_json: String,
+    pub(crate) corrected_text: String,
     pub(crate) has_morph: bool,
     pub(crate) has_sense: bool,
     pub(crate) has_syntax: bool,
+    pub(crate) has_error: bool,
     pub(crate) match_layer: String,
 }
 
@@ -223,6 +227,9 @@ pub(crate) struct SegmentDetailResponse {
     pub(crate) morph_flat: String,
     pub(crate) sense_flat: String,
     pub(crate) syntax_tree: String,
+    pub(crate) error_flat: String,
+    pub(crate) errors: serde_json::Value,
+    pub(crate) corrected_text: String,
     pub(crate) eojeols: serde_json::Value,
     pub(crate) meta: serde_json::Value,
     pub(crate) neighbors: Vec<NeighborSentence>,

@@ -35,7 +35,12 @@ let isSearchInProgress = false;
   const chkTargetMorph = document.getElementById('chk-target-morph');
   const chkTargetSense = document.getElementById('chk-target-sense');
   const chkTargetSyntax = document.getElementById('chk-target-syntax');
+  const chkTargetError = document.getElementById('chk-target-error');
   const chkTargetVector = document.getElementById('chk-target-vector');
+  const errorFilterBar = document.getElementById('error-filter-bar');
+  const selectErrorArea = document.getElementById('select-error-area');
+  const selectErrorPattern = document.getElementById('select-error-pattern');
+  const selectErrorLevel = document.getElementById('select-error-level');
 
   const chkMethodJamo = document.getElementById('chk-method-jamo');
   const chkMethodRegex = document.getElementById('chk-method-regex');
@@ -468,10 +473,11 @@ let isSearchInProgress = false;
       if (selectLayer) selectLayer.value = layer;
 
       // Sync single-select target radio & method checkboxes with preset mode
-      if (chkTargetSurface) chkTargetSurface.checked = (mode !== 'morph' && mode !== 'sense' && mode !== 'syntax' && mode !== 'vector');
+      if (chkTargetSurface) chkTargetSurface.checked = (mode !== 'morph' && mode !== 'sense' && mode !== 'syntax' && mode !== 'error' && mode !== 'vector');
       if (chkTargetMorph) chkTargetMorph.checked = (mode === 'morph');
       if (chkTargetSense) chkTargetSense.checked = (mode === 'sense');
       if (chkTargetSyntax) chkTargetSyntax.checked = (mode === 'syntax');
+      if (chkTargetError) chkTargetError.checked = (mode === 'error');
       if (chkTargetVector) chkTargetVector.checked = (mode === 'vector');
       if (chkMethodJamo) chkMethodJamo.checked = (mode === 'jamo' || (q.includes('[') && q.includes(']') && q.includes('/')));
       if (chkMethodRegex) chkMethodRegex.checked = (mode === 'regex');
@@ -907,6 +913,9 @@ let isSearchInProgress = false;
         if (layerText.includes('구문')) {
           badges.push('<span class="layer-badge badge-syntax" style="font-size:0.68rem; padding:1px 5px;">구문</span>');
         }
+        if (layerText.includes('오류')) {
+          badges.push('<span class="layer-badge" style="font-size:0.68rem; padding:1px 5px; background:#fee2e2; color:#991b1b; border:1px solid #fca5a5;">오류</span>');
+        }
         if (layerText.includes('벡터')) {
           badges.push('<span class="layer-badge badge-syntax" style="font-size:0.68rem; padding:1px 5px;">벡터</span>');
         }
@@ -1306,6 +1315,7 @@ let isSearchInProgress = false;
       if (chkTargetMorph) chkTargetMorph.checked = (tab.targets === 'morph');
       if (chkTargetSense) chkTargetSense.checked = (tab.targets === 'sense');
       if (chkTargetSyntax) chkTargetSyntax.checked = (tab.targets === 'syntax');
+      if (chkTargetError) chkTargetError.checked = (tab.targets === 'error');
       if (chkTargetVector) chkTargetVector.checked = (tab.targets === 'vector');
       updateSearchMethodSummaryLabel();
     }
@@ -1516,6 +1526,8 @@ let isSearchInProgress = false;
       '형태',
       '의미',
       '구문',
+      '교정문장',
+      '오류주석',
     ];
 
     const lines = [headers.join('\t')];
@@ -1535,6 +1547,8 @@ let isSearchInProgress = false;
           h.morph_flat || '',
           h.sense_flat || '',
           h.syntax_tree || '',
+          h.corrected_text || '',
+          h.error_flat || '',
         ]
           .map((v) => String(v).replace(/[\r\n\t]+/g, ' '))
           .join('\t')
@@ -2011,6 +2025,7 @@ let isSearchInProgress = false;
     if (chkTargetMorph && chkTargetMorph.checked) return ['morph'];
     if (chkTargetSense && chkTargetSense.checked) return ['sense'];
     if (chkTargetSyntax && chkTargetSyntax.checked) return ['syntax'];
+    if (chkTargetError && chkTargetError.checked) return ['error'];
     if (chkTargetVector && chkTargetVector.checked) return ['vector'];
     return ['surface'];
   }
@@ -2036,7 +2051,12 @@ let isSearchInProgress = false;
     if (targets.includes('morph')) targetStr = '형태';
     else if (targets.includes('sense')) targetStr = '의미';
     else if (targets.includes('syntax')) targetStr = '구문';
+    else if (targets.includes('error')) targetStr = '오류';
     else if (targets.includes('vector')) targetStr = '벡터';
+
+    if (errorFilterBar) {
+      errorFilterBar.style.display = targets.includes('error') ? 'flex' : 'none';
+    }
 
     let methodStr = '기본';
     const hasJamo = methods.includes('jamo');
@@ -2088,7 +2108,7 @@ let isSearchInProgress = false;
     }
 
     // Radio & checkbox change handlers
-    [chkTargetSurface, chkTargetMorph, chkTargetSense, chkTargetSyntax, chkTargetVector,
+    [chkTargetSurface, chkTargetMorph, chkTargetSense, chkTargetSyntax, chkTargetError, chkTargetVector,
      chkMethodJamo, chkMethodRegex].forEach((chk) => {
       if (chk) {
         chk.addEventListener('change', () => {
@@ -2138,6 +2158,9 @@ let isSearchInProgress = false;
     if (h.has_syntax || hitLayers.includes('구문')) {
       badges.push('<span class="layer-badge badge-syntax">구문</span>');
     }
+    if (h.has_error || hitLayers.includes('오류')) {
+      badges.push('<span class="layer-badge" style="background:#fee2e2; color:#991b1b; border:1px solid #fca5a5;">오류</span>');
+    }
     if (hitLayers.includes('벡터')) {
       badges.push('<span class="layer-badge badge-syntax">벡터</span>');
     }
@@ -2148,10 +2171,26 @@ let isSearchInProgress = false;
     const isMorphMatch = (h.match_layer && h.match_layer.includes('형태') && !h.match_layer.includes('의미')) || (chkTargetMorph && chkTargetMorph.checked);
     const isSenseMatch = (h.match_layer && h.match_layer.includes('의미')) || (chkTargetSense && chkTargetSense.checked);
     const isSyntaxMatch = (h.match_layer && h.match_layer.includes('구문')) || (chkTargetSyntax && chkTargetSyntax.checked);
+    const isErrorMatch = (h.match_layer && h.match_layer.includes('오류')) || (chkTargetError && chkTargetError.checked);
 
     let nodeSubHtml = '';
     let rightLayerHtml = '';
-    if (isMorphMatch && h.morph_flat) {
+    if (isErrorMatch && h.error_flat) {
+      const cleanNode = String(h.node || '').trim();
+      const matchedErr = h.error_flat
+        .split(' | ')
+        .find((e) => {
+          const lhs = e.split('->')[0] || '';
+          return cleanNode && (lhs === cleanNode || lhs.includes(cleanNode) || cleanNode.includes(lhs));
+        });
+      if (matchedErr) {
+        nodeSubHtml = `<div class="kwic-node-analysis" style="color:#991b1b; background:#fee2e2; border-color:#fca5a5;">${escapeHtml(matchedErr)}</div>`;
+      }
+      rightLayerHtml = `
+        <div class="kwic-layer-subline" style="color:#991b1b;">🩺 <strong>오류주석:</strong> ${escapeHtml(h.error_flat)}</div>
+        ${h.corrected_text ? `<div class="kwic-layer-subline" style="color:#065f46;">✅ <strong>교정문장:</strong> ${escapeHtml(h.corrected_text)}</div>` : ''}
+      `;
+    } else if (isMorphMatch && h.morph_flat) {
       const nodeMorph = extractMatchedEojeolAnnotation(h.node, h.morph_flat);
       if (nodeMorph) {
         nodeSubHtml = `<div class="kwic-node-analysis">${escapeHtml(nodeMorph)}</div>`;
@@ -2337,6 +2376,9 @@ let isSearchInProgress = false;
       doc_ids: docIdsParam,
       context_words: contextWords,
       limit,
+      error_area: selectErrorArea ? selectErrorArea.value : 'ALL',
+      error_pattern: selectErrorPattern ? selectErrorPattern.value : 'ALL',
+      error_level: selectErrorLevel ? selectErrorLevel.value : 'ALL',
     });
 
     try {
@@ -2600,6 +2642,40 @@ let isSearchInProgress = false;
       `;
     }
 
+    const errorHtml =
+      d.error_flat || d.corrected_text || (Array.isArray(d.errors) && d.errors.length > 0)
+        ? `
+      <div class="detail-section">
+        <div class="detail-label">🩺 학습자 오류 주석 및 교정 내용</div>
+        ${
+          d.corrected_text
+            ? `<div style="margin-bottom:8px; padding:8px 10px; background:#ecfdf5; border:1px solid #6ee7b7; border-radius:6px; color:#065f46;"><strong>✅ 교정 문장:</strong> <span class="corpus-text">${escapeHtml(d.corrected_text)}</span></div>`
+            : ''
+        }
+        ${
+          Array.isArray(d.errors) && d.errors.length > 0
+            ? `<div class="eojeol-grid">
+                ${d.errors
+                  .map(
+                    (er) => `
+                  <div class="eojeol-card" style="border-color:#fca5a5; background:#fff7ed;">
+                    <div class="eojeol-surface" style="color:#991b1b;">${escapeHtml(er.word || '')} → <strong>${escapeHtml(er.corrected || '(삭제)')}</strong></div>
+                    ${Array.isArray(er.areas) && er.areas.length ? `<div style="font-size:0.74rem; color:#7c2d12;"><strong>범주(Area):</strong> ${escapeHtml(er.areas.join(', '))}</div>` : ''}
+                    ${Array.isArray(er.patterns) && er.patterns.length ? `<div style="font-size:0.74rem; color:#7c2d12;"><strong>양상(Pattern):</strong> ${escapeHtml(er.patterns.join(', '))}</div>` : ''}
+                    ${Array.isArray(er.levels) && er.levels.length ? `<div style="font-size:0.74rem; color:#7c2d12;"><strong>층위(Level):</strong> ${escapeHtml(er.levels.join(', '))}</div>` : ''}
+                  </div>
+                `
+                  )
+                  .join('')}
+              </div>`
+            : d.error_flat
+            ? `<div class="corpus-text" style="color:#991b1b;">${escapeHtml(d.error_flat)}</div>`
+            : ''
+        }
+      </div>
+    `
+        : '';
+
     const syntaxHtml = d.syntax_tree
       ? `
       <div class="detail-section">
@@ -2690,6 +2766,7 @@ let isSearchInProgress = false;
       </div>
 
       ${eojeolHtml}
+      ${errorHtml}
       ${syntaxHtml}
       ${neighborsHtml}
       ${editsHtml}
