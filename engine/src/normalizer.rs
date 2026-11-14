@@ -239,6 +239,13 @@ impl Normalizer {
     }
 
     pub(crate) fn compose_modern_hangul_for_display(&self, text: &str) -> String {
+        // Fast-path: PUA(E000..F8FF)나 첫가끝 NFD 자모(1100..11FF)가 전혀 없으면 변환 없이 즉시 반환
+        if !text
+            .chars()
+            .any(|c| matches!(c as u32, 0x1100..=0x11FF | 0xE000..=0xF8FF))
+        {
+            return text.to_string();
+        }
         let mut expanded = String::with_capacity(text.len());
         for ch in text.chars() {
             if let Some(pua_nfd) = self.pua_to_nfd.get(&ch) {

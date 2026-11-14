@@ -125,7 +125,7 @@ pub(crate) fn pad_kwic_context(
     if words_counted < context_words {
         let mut needed = context_words - words_counted;
         let mut prev_words = Vec::new();
-        if let Ok(mut stmt_prev) = conn.prepare(
+        if let Ok(mut stmt_prev) = conn.prepare_cached(
             "SELECT text_unicode FROM segments WHERE doc_id = ? AND seq_no < ? ORDER BY seq_no DESC LIMIT 3",
         ) {
             if let Ok(mut rows) = stmt_prev.query(params![doc_id, seq_no]) {
@@ -174,7 +174,7 @@ pub(crate) fn pad_kwic_context(
     if r_words_counted < context_words {
         let mut needed = context_words - r_words_counted;
         let mut next_words = Vec::new();
-        if let Ok(mut stmt_next) = conn.prepare(
+        if let Ok(mut stmt_next) = conn.prepare_cached(
             "SELECT text_unicode FROM segments WHERE doc_id = ? AND seq_no > ? ORDER BY seq_no ASC LIMIT 3",
         ) {
             if let Ok(mut rows) = stmt_next.query(params![doc_id, seq_no]) {
@@ -616,7 +616,6 @@ pub(crate) fn match_analysis_layer(
     state: &AppState,
     qctx: &SearchQueryContext,
     display_text: &str,
-    word_spans: &[(usize, usize, &str)],
     flat_str: &str,
     layer_label: &'static str,
     layer_jamo_label: &'static str,
@@ -625,93 +624,97 @@ pub(crate) fn match_analysis_layer(
     if flat_str.is_empty() {
         return None;
     }
-    let raw_eas: Vec<&str> = flat_str.split(" | ").collect();
-    if raw_eas.is_empty() {
-        return None;
-    }
-
-    // Precompute normalized eojeol structures: pure morphological/sense analysis per eojeol
-    struct EojeolItem {
-        raw_word: String,
-        mo_clean: String,
-        norm_mo: String,
-    }
-
-    let mut items: Vec<EojeolItem> = Vec::with_capacity(raw_eas.len());
-    for ea in &raw_eas {
-        let (w_raw, m_raw) = split_eojeol_word_and_analysis(ea);
-        let w_disp = state.normalizer.compose_modern_hangul_for_display(w_raw);
-        let mo_compat = state.normalizer.normalize_morph_for_regex(m_raw);
-        let mo_clean = strip_leading_morph_quotes(&mo_compat).to_string();
-        let norm_mo = state.normalizer.normalize_morph_str(&mo_clean);
-        items.push(EojeolItem {
-            raw_word: w_disp,
-            mo_clean,
-            norm_mo,
-        });
-    }
 
     let req_start = qctx.req_eojeol_start && qctx.search_unit != "text";
+    let cq_clean = if qctx.use_text && !qctx.use_regex && qctx.bracket_tokens.is_none() {
+        Some(qctx.core_query.replace(" + ", "+"))
+    } else {
+        None
+    };
 
-    // Helper closure to test a single eojeol strictly within its own analysis (`mo_clean`)
-    let check_single_eojeol = |item: &EojeolItem| -> Option<&'static str> {
+    // 1. Check single-eojeol matches first (lazy allocation: only build what's needed)
+    let mut ea_count = 0usize;
+    for (idx, ea) in flat_str.split(" | ").enumerate() {
+        ea_count += 1;
+        let (w_raw, m_raw) = split_eojeol_word_and_analysis(ea);
+        let mo_compat = state.normalizer.normalize_morph_for_regex(m_raw);
+        let mo_clean = strip_leading_morph_quotes(&mo_compat);
+
+        let mut matched_lbl: Option<&'static str> = None;
+
         // 1) Regex match (takes priority when query has regex syntax or regex is enabled)
         if qctx.use_regex {
             if req_start {
                 if let Some(re_anc) = qctx.anchored_regex {
-                    if re_anc.is_match(&item.mo_clean) {
-                        return Some(layer_regex_label);
+                    if re_anc.is_match(mo_clean) {
+                        matched_lbl = Some(layer_regex_label);
                     }
                 }
             } else if let Some(re) = qctx.compiled_regex {
-                if re.is_match(&item.mo_clean) {
-                    return Some(layer_regex_label);
+                if re.is_match(mo_clean) {
+                    matched_lbl = Some(layer_regex_label);
                 }
             }
         }
         // 2) Jamo bracket match (when not a regex-quantifier query)
-        if (qctx.use_jamo || qctx.bracket_tokens.is_some()) && !qctx.use_regex {
+        if matched_lbl.is_none() && (qctx.use_jamo || qctx.bracket_tokens.is_some()) && !qctx.use_regex {
             if let Some(b_tokens) = qctx.bracket_tokens {
-                let mo_units = state.normalizer.tokenize_text_units(&item.mo_clean);
+                let mo_units = state.normalizer.tokenize_text_units(mo_clean);
                 if let Some((sc, _)) = find_bracket_query_match(b_tokens, &mo_units) {
                     if !req_start || sc == 0 {
-                        return Some(layer_jamo_label);
+                        matched_lbl = Some(layer_jamo_label);
                     }
                 }
             }
         }
         // 3) Plain text / normalized morph match
-        if qctx.use_text && !qctx.use_regex && qctx.bracket_tokens.is_none() {
-            let cq_clean = qctx.core_query.replace(" + ", "+");
-            if req_start {
-                if item.mo_clean.starts_with(qctx.core_query)
-                    || item.mo_clean.replace(" + ", "+").starts_with(&cq_clean)
-                    || item.norm_mo.starts_with(qctx.norm_morph_query)
+        if matched_lbl.is_none() {
+            if let Some(ref cq_cln) = cq_clean {
+                if req_start {
+                    if mo_clean.starts_with(qctx.core_query)
+                        || mo_clean.replace(" + ", "+").starts_with(cq_cln.as_str())
+                        || state.normalizer.normalize_morph_str(mo_clean).starts_with(qctx.norm_morph_query)
+                    {
+                        matched_lbl = Some(layer_label);
+                    }
+                } else if mo_clean.contains(qctx.core_query)
+                    || mo_clean.replace(" + ", "+").contains(cq_cln.as_str())
+                    || state.normalizer.normalize_morph_str(mo_clean).contains(qctx.norm_morph_query)
                 {
-                    return Some(layer_label);
+                    matched_lbl = Some(layer_label);
                 }
-            } else if item.mo_clean.contains(qctx.core_query)
-                || item.mo_clean.replace(" + ", "+").contains(&cq_clean)
-                || item.norm_mo.contains(qctx.norm_morph_query)
-            {
-                return Some(layer_label);
             }
         }
-        None
-    };
 
-    // 1. Check single-eojeol matches first
-    for (idx, item) in items.iter().enumerate() {
-        if let Some(lbl) = check_single_eojeol(item) {
+        if let Some(lbl) = matched_lbl {
+            let w_disp = state.normalizer.compose_modern_hangul_for_display(w_raw);
+            let word_spans = compute_display_word_spans(display_text);
             let (sc, ec) =
-                find_eojeol_span_in_display(display_text, word_spans, idx, idx, &item.raw_word);
+                find_eojeol_span_in_display(display_text, &word_spans, idx, idx, &w_disp);
             return Some((sc, ec, lbl));
         }
     }
 
     // If search_unit is strictly "eojeol", do not cross eojeol boundaries!
-    if qctx.search_unit == "eojeol" || items.len() < 2 {
+    if qctx.search_unit == "eojeol" || ea_count < 2 {
         return None;
+    }
+
+    // 2. Multi-eojeol matching within the sentence ("sentence" or "text" mode)
+    struct EojeolItem {
+        raw_word: String,
+        mo_clean: String,
+    }
+    let mut items: Vec<EojeolItem> = Vec::with_capacity(ea_count);
+    for ea in flat_str.split(" | ") {
+        let (w_raw, m_raw) = split_eojeol_word_and_analysis(ea);
+        let w_disp = state.normalizer.compose_modern_hangul_for_display(w_raw);
+        let mo_compat = state.normalizer.normalize_morph_for_regex(m_raw);
+        let mo_clean = strip_leading_morph_quotes(&mo_compat).to_string();
+        items.push(EojeolItem {
+            raw_word: w_disp,
+            mo_clean,
+        });
     }
 
     // 2. Multi-eojeol matching within the sentence ("sentence" or "text" mode)
@@ -743,9 +746,10 @@ pub(crate) fn match_analysis_layer(
                             .find(|&&(_, b_end)| m.end() <= b_end)
                             .map(|&(ej, _)| ej)
                             .unwrap_or(items.len() - 1);
+                        let word_spans = compute_display_word_spans(display_text);
                         let (sc, ec) = find_eojeol_span_in_display(
                             display_text,
-                            word_spans,
+                            &word_spans,
                             start_idx,
                             end_ej,
                             &items[start_idx].raw_word,
@@ -769,9 +773,10 @@ pub(crate) fn match_analysis_layer(
                             .find(|&&(_, b_end)| matched_byte_len <= b_end)
                             .map(|&(ej, _)| ej)
                             .unwrap_or(items.len() - 1);
+                        let word_spans = compute_display_word_spans(display_text);
                         let (sc, ec) = find_eojeol_span_in_display(
                             display_text,
-                            word_spans,
+                            &word_spans,
                             start_idx,
                             end_ej,
                             &items[start_idx].raw_word,
@@ -786,9 +791,10 @@ pub(crate) fn match_analysis_layer(
         if qctx.use_text && !qctx.use_regex && qctx.bracket_tokens.is_none() {
             if req_start {
                 if mo_tail.starts_with(qctx.core_query) {
+                    let word_spans = compute_display_word_spans(display_text);
                     let (sc, ec) = find_eojeol_span_in_display(
                         display_text,
-                        word_spans,
+                        &word_spans,
                         start_idx,
                         (start_idx + 1).min(items.len() - 1),
                         &items[start_idx].raw_word,
@@ -796,9 +802,10 @@ pub(crate) fn match_analysis_layer(
                     return Some((sc, ec, layer_label));
                 }
             } else if mo_tail.contains(qctx.core_query) {
+                let word_spans = compute_display_word_spans(display_text);
                 let (sc, ec) = find_eojeol_span_in_display(
                     display_text,
-                    word_spans,
+                    &word_spans,
                     start_idx,
                     (start_idx + 1).min(items.len() - 1),
                     &items[start_idx].raw_word,
@@ -826,12 +833,12 @@ pub(crate) fn evaluate_segment_match(
     sense_flat: &str,
     syntax_tree: &str,
 ) -> Option<(usize, usize, &'static str)> {
-    let word_spans = compute_display_word_spans(display_text);
     let req_start = qctx.req_eojeol_start && qctx.search_unit != "text";
 
     // 1. Surface layer matching
     if qctx.use_surface {
         if qctx.search_unit == "eojeol" {
+            let word_spans = compute_display_word_spans(display_text);
             for &(w_sc, w_ec, w_str) in &word_spans {
                 let (w_clean, _skipped_c) = strip_leading_surface_quotes(w_str);
                 if w_clean.is_empty() {
@@ -993,7 +1000,6 @@ pub(crate) fn evaluate_segment_match(
             state,
             qctx,
             display_text,
-            &word_spans,
             morph_flat,
             "형태분석",
             "형태소/자소",
@@ -1009,7 +1015,6 @@ pub(crate) fn evaluate_segment_match(
             state,
             qctx,
             display_text,
-            &word_spans,
             sense_flat,
             "형태의미",
             "형태의미/자소",
@@ -1021,30 +1026,39 @@ pub(crate) fn evaluate_segment_match(
 
     // 4. Syntax tree layer matching
     if qctx.use_syntax && !syntax_tree.is_empty() {
-        let first_word_len = word_spans.first().map(|w| w.1 - w.0).unwrap_or(6);
-        let syn_compat = state.normalizer.normalize_morph_for_regex(syntax_tree);
-        if qctx.use_regex {
-            if let Some(re) = qctx.compiled_regex {
-                if re.is_match(&syn_compat) || re.is_match(syntax_tree) {
-                    return Some((0, first_word_len, "구문/정규식"));
-                }
-            }
-        }
-        if (qctx.use_jamo || qctx.bracket_tokens.is_some()) && !qctx.use_regex {
-            if let Some(b_tokens) = qctx.bracket_tokens {
-                let syn_units = state.normalizer.tokenize_text_units(&syn_compat);
-                if find_bracket_query_match(b_tokens, &syn_units).is_some() {
-                    return Some((0, first_word_len, "구문/자소"));
-                }
-            }
-        }
+        let first_word_len = || {
+            display_text
+                .split_whitespace()
+                .next()
+                .map(|w| w.chars().count())
+                .unwrap_or(6)
+        };
         if qctx.use_text && !qctx.use_regex && qctx.bracket_tokens.is_none() {
-            let norm_syn = state.normalizer.normalize_morph_str(syntax_tree);
-            if syntax_tree.contains(qctx.core_query)
-                || syn_compat.contains(qctx.core_query)
-                || norm_syn.contains(qctx.norm_morph_query)
+            if syntax_tree.contains(qctx.core_query) {
+                return Some((0, first_word_len(), "구문분석"));
+            }
+            let syn_compat = state.normalizer.normalize_morph_for_regex(syntax_tree);
+            if syn_compat.contains(qctx.core_query)
+                || state.normalizer.normalize_morph_str(syntax_tree).contains(qctx.norm_morph_query)
             {
-                return Some((0, first_word_len, "구문분석"));
+                return Some((0, first_word_len(), "구문분석"));
+            }
+        } else {
+            let syn_compat = state.normalizer.normalize_morph_for_regex(syntax_tree);
+            if qctx.use_regex {
+                if let Some(re) = qctx.compiled_regex {
+                    if re.is_match(&syn_compat) || re.is_match(syntax_tree) {
+                        return Some((0, first_word_len(), "구문/정규식"));
+                    }
+                }
+            }
+            if (qctx.use_jamo || qctx.bracket_tokens.is_some()) && !qctx.use_regex {
+                if let Some(b_tokens) = qctx.bracket_tokens {
+                    let syn_units = state.normalizer.tokenize_text_units(&syn_compat);
+                    if find_bracket_query_match(b_tokens, &syn_units).is_some() {
+                        return Some((0, first_word_len(), "구문/자소"));
+                    }
+                }
             }
         }
     }
@@ -1130,6 +1144,51 @@ pub(crate) fn evaluate_cross_sentence_match(
     ) {
         if sc < cur_char_len && ec > cur_char_len {
             return Some((comb_display, sc, ec, lbl));
+        }
+    }
+    None
+}
+
+/// 형태소/의미/구문 검색에서 NFD/자소 변형이 없는 순수 ASCII 태그(예: `/NNG`, `NP_SBJ`, `__02`)를 추출해
+/// SQLite LIKE 1차 필터로 활용합니다. OR(`|`) 또는 선택 수량자(`?`, `*`, `{0`)가 있는 경우 None을 반환합니다.
+fn extract_safe_ascii_filter_token(
+    core_query: &str,
+    use_morph: bool,
+    use_sense: bool,
+    use_syntax: bool,
+) -> Option<String> {
+    if core_query.contains('|') || core_query.contains('(') || core_query.contains('?') || core_query.contains('*') {
+        return None;
+    }
+    if use_syntax && !use_morph && !use_sense {
+        let t = core_query.trim();
+        if t.len() >= 2 && t.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+            return Some(t.to_string());
+        }
+        return None;
+    }
+    if (use_morph || use_sense) && core_query.contains('/') {
+        if let Some(after) = core_query.rsplit('/').next() {
+            let tag: String = after
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect();
+            // '/' 바로 뒤가 2글자 이상 영문 대문자 품사 태그(NNG, ETM, VV 등)인 경우 안전
+            if tag.len() >= 2 && tag.bytes().all(|b| b.is_ascii_uppercase() || b == b'_') {
+                return Some(format!("/{}", tag));
+            }
+        }
+    }
+    if use_sense {
+        if let Some(pos) = core_query.find("__") {
+            let after = &core_query[pos..];
+            let tok: String = after
+                .chars()
+                .take_while(|c| *c == '_' || c.is_ascii_digit())
+                .collect();
+            if tok.len() >= 4 {
+                return Some(tok);
+            }
         }
     }
     None
@@ -1488,6 +1547,18 @@ pub(crate) fn handle_search(
         sql_params.push(format!("%{}%", like_nfd));
         sql_params.push(format!("%{}%", like_tok));
         sql_params.push(format!("%{}%", like_tok));
+    } else if !core_query.is_empty() && !use_surface {
+        if let Some(ascii_tok) = extract_safe_ascii_filter_token(core_query, use_morph, use_sense, use_syntax) {
+            let col = if use_morph {
+                "s.morph_flat"
+            } else if use_sense {
+                "s.sense_flat"
+            } else {
+                "s.syntax_tree"
+            };
+            sql.push_str(&format!(" AND {} LIKE ?", col));
+            sql_params.push(format!("%{}%", ascii_tok));
+        }
     }
 
     sql.push_str(" ORDER BY s.doc_id ASC, s.seq_no ASC");
@@ -1575,11 +1646,6 @@ pub(crate) fn handle_search(
                 syntax_tree,
             ) = item;
 
-            let (doc_title, corpus_category, annotation_layers) = match doc_meta_map.get(&doc_id) {
-                Some(m) => (m.title.clone(), m.category.clone(), m.layers.clone()),
-                None => (doc_id.clone(), "원시 말뭉치".to_string(), "원문".to_string()),
-            };
-
             let display_text = state
                 .normalizer
                 .compose_modern_hangul_for_display(&text_unicode);
@@ -1588,6 +1654,10 @@ pub(crate) fn handle_search(
             if core_query.is_empty() {
                 total_matches += 1;
                 if hits.len() < limit {
+                    let (doc_title, corpus_category, annotation_layers) = match doc_meta_map.get(&doc_id) {
+                        Some(m) => (m.title.clone(), m.category.clone(), m.layers.clone()),
+                        None => (doc_id.clone(), "원시 말뭉치".to_string(), "원문".to_string()),
+                    };
                     let first_word_len = display_text
                         .split_whitespace()
                         .next()
@@ -1682,6 +1752,10 @@ pub(crate) fn handle_search(
             if let Some((kwic_base_text, start_c, end_c, layer_name)) = matched_span {
                 total_matches += 1;
                 if hits.len() < limit {
+                    let (doc_title, corpus_category, annotation_layers) = match doc_meta_map.get(&doc_id) {
+                        Some(m) => (m.title.clone(), m.category.clone(), m.layers.clone()),
+                        None => (doc_id.clone(), "원시 말뭉치".to_string(), "원문".to_string()),
+                    };
                     let (raw_left, node, raw_right, w_cnt, rw_cnt, l_trunc, r_trunc) =
                         extract_kwic_by_word_count(
                             &kwic_base_text,
@@ -2072,6 +2146,18 @@ pub(crate) fn handle_search_stream(
             sql_params.push(format!("%{}%", like_nfd));
             sql_params.push(format!("%{}%", like_tok));
             sql_params.push(format!("%{}%", like_tok));
+        } else if !core_query.is_empty() && !use_surface {
+            if let Some(ascii_tok) = extract_safe_ascii_filter_token(core_query, use_morph, use_sense, use_syntax) {
+                let col = if use_morph {
+                    "s.morph_flat"
+                } else if use_sense {
+                    "s.sense_flat"
+                } else {
+                    "s.syntax_tree"
+                };
+                sql.push_str(&format!(" AND {} LIKE ?", col));
+                sql_params.push(format!("%{}%", ascii_tok));
+            }
         }
 
         sql.push_str(" ORDER BY s.doc_id ASC, s.seq_no ASC");
@@ -2159,11 +2245,6 @@ pub(crate) fn handle_search_stream(
                     syntax_tree,
                 ) = item;
 
-                let (doc_title, corpus_category, annotation_layers) = match doc_meta_map.get(&doc_id) {
-                    Some(m) => (m.title.clone(), m.category.clone(), m.layers.clone()),
-                    None => (doc_id.clone(), "원시 말뭉치".to_string(), "원문".to_string()),
-                };
-
                 let display_text = state_worker
                     .normalizer
                     .compose_modern_hangul_for_display(&text_unicode);
@@ -2172,6 +2253,10 @@ pub(crate) fn handle_search_stream(
                 if core_query.is_empty() {
                     total_matches += 1;
                     returned_count += 1;
+                    let (doc_title, corpus_category, annotation_layers) = match doc_meta_map.get(&doc_id) {
+                        Some(m) => (m.title.clone(), m.category.clone(), m.layers.clone()),
+                        None => (doc_id.clone(), "원시 말뭉치".to_string(), "원문".to_string()),
+                    };
 
                     let first_word_len = display_text
                         .split_whitespace()
@@ -2280,6 +2365,10 @@ pub(crate) fn handle_search_stream(
                 if let Some((kwic_base_text, match_start, match_end, layer_name)) = matched_span {
                     total_matches += 1;
                     returned_count += 1;
+                    let (doc_title, corpus_category, annotation_layers) = match doc_meta_map.get(&doc_id) {
+                        Some(m) => (m.title.clone(), m.category.clone(), m.layers.clone()),
+                        None => (doc_id.clone(), "원시 말뭉치".to_string(), "원문".to_string()),
+                    };
 
                     let (raw_left, node, raw_right, w_cnt, rw_cnt, l_trunc, r_trunc) =
                         extract_kwic_by_word_count(
