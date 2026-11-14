@@ -87,8 +87,8 @@
             <!-- 2. 검색방식 -->
             <div class="opt-pill">
               <label for="btn-search-method-trigger">검색방식</label>
-              <button type="button" class="btn-doc-selector-trigger" id="btn-search-method-trigger" title="검색 대상 층위(원문 표층/형태소·품사/형태의미/구문표지 중 택1)와 특수 연산 방식(자소/정규식)을 설정합니다.">
-                <span id="search-method-summary-label">원문 표층 · 기본</span> ▾
+              <button type="button" class="btn-doc-selector-trigger" id="btn-search-method-trigger" title="검색 대상 층위(평문/형태/의미/구문/벡터 중 택1)와 특수 연산 방식(자소/정규식)을 설정합니다.">
+                <span id="search-method-summary-label">평문 · 기본</span> ▾
               </button>
             </div>
 
@@ -500,24 +500,29 @@
                   </thead>
                   <tbody>
                     <tr>
-                      <td><strong>원문 표층</strong></td>
-                      <td>원문 본문 및 옛한글 표층 텍스트에서 검색합니다.</td>
+                      <td><strong>평문</strong></td>
+                      <td>분석이 이루어지지 않은 평문 텍스트 및 옛한글 원문에서 검색합니다.</td>
                       <td><code>하ᄂᆞᆯ</code>, <code>[ㄱ/ㅏ/01]</code></td>
                     </tr>
                     <tr>
-                      <td><strong>형태소 / 품사</strong></td>
-                      <td><strong>형태소 분석 말뭉치</strong>에서만 검색하며, KWIC 화면에 형태분석 결과를 함께 표시합니다. (<code>ᆫ/ETM</code>·<code>ㄴ/ETM</code> 자동 통합)</td>
+                      <td><strong>형태</strong></td>
+                      <td><strong>형태</strong> 분석 말뭉치에서만 검색하며, KWIC 화면에 형태분석 결과를 함께 표시합니다. (<code>ᆫ/ETM</code>·<code>ㄴ/ETM</code> 자동 통합)</td>
                       <td><code>하[ㄴ/1/01].{1,10}/NNG</code>, <code>교양/NNG</code>, <code>ㄴ/ETM</code></td>
                     </tr>
                     <tr>
-                      <td><strong>형태의미</strong></td>
-                      <td><strong>형태의미 분석 말뭉치</strong>에서만 어깨번호(<code>단어__번호</code>)를 검색하고 결과를 표시합니다.</td>
+                      <td><strong>의미</strong></td>
+                      <td><strong>의미</strong>(형태의미) 분석 말뭉치에서만 어깨번호(<code>단어__번호</code>)를 검색하고 결과를 표시합니다.</td>
                       <td><code>세계__02</code>, <code>생각__01/NNG</code></td>
                     </tr>
                     <tr>
-                      <td><strong>구문표지</strong></td>
-                      <td><strong>구문분석 말뭉치</strong>에서만 S-식 구문 태그를 검색하고 구문 트리를 표시합니다.</td>
+                      <td><strong>구문</strong></td>
+                      <td><strong>구문</strong> 분석 말뭉치에서만 S-식 구문 태그를 검색하고 구문 트리를 표시합니다.</td>
                       <td><code>NP_SBJ</code>, <code>VP_MOD</code>, <code>NP_OBJ</code></td>
+                    </tr>
+                    <tr>
+                      <td><strong>벡터</strong></td>
+                      <td>워드 임베딩이 포함된 <strong>벡터</strong> 말뭉치 전용 검색 층위입니다. (추후 지원)</td>
+                      <td><code>벡터 임베딩 유사어</code></td>
                     </tr>
                   </tbody>
                 </table>
@@ -747,34 +752,41 @@
                 <span>📂 1. 검색 대상 층위 (단일 선택)</span>
               </div>
             </div>
-            <p class="method-section-desc">4개의 선택지 중 하나만 선택할 수 있습니다. <strong>형태소/품사</strong> 선택 시 <strong>형태소 분석 말뭉치</strong>에서만 검색이 이루어지고 분석 결과가 화면에 표시됩니다.</p>
+            <p class="method-section-desc">5개의 층위 중 하나를 선택합니다. <strong>평문</strong>은 평문 DB, <strong>형태·의미·구문·벡터</strong>는 해당 분석 표지가 있는 DB에서만 검색이 이루어집니다.</p>
             <div class="method-item-list">
               <label class="method-item-label">
                 <input type="radio" name="search-target-layer" id="chk-target-surface" value="surface" checked />
                 <div class="method-item-text">
-                  <strong>원문 표층 (surface)</strong>
-                  <span>원문 본문 및 옛한글 표층 텍스트에서 검색</span>
+                  <strong>평문 (surface)</strong>
+                  <span>분석이 없는 평문 텍스트 및 옛한글 원문에서 검색</span>
                 </div>
               </label>
               <label class="method-item-label">
                 <input type="radio" name="search-target-layer" id="chk-target-morph" value="morph" />
                 <div class="method-item-text">
-                  <strong>형태소/품사 (morph)</strong>
-                  <span>형태소 분석 말뭉치 전용 검색 및 형태분석 결과 표시 (예: 세계/NNG, 가/VV)</span>
+                  <strong>형태 (morph)</strong>
+                  <span>형태 분석 말뭉치 전용 검색 및 형태분석 결과 표시 (예: 세계/NNG, 가/VV)</span>
                 </div>
               </label>
               <label class="method-item-label">
                 <input type="radio" name="search-target-layer" id="chk-target-sense" value="sense" />
                 <div class="method-item-text">
-                  <strong>형태의미 (sense)</strong>
+                  <strong>의미 (sense)</strong>
                   <span>형태의미 분석 말뭉치 전용 어깨번호 검색 및 결과 표시 (예: 세계__02, 눈__01)</span>
                 </div>
               </label>
               <label class="method-item-label">
                 <input type="radio" name="search-target-layer" id="chk-target-syntax" value="syntax" />
                 <div class="method-item-text">
-                  <strong>구문표지 (syntax)</strong>
-                  <span>구문분석 말뭉치 전용 트리 및 구문 범주 태그 검색 (예: NP_SBJ, VP)</span>
+                  <strong>구문 (syntax)</strong>
+                  <span>구문 분석 말뭉치 전용 트리 및 구문 범주 태그 검색 (예: NP_SBJ, VP)</span>
+                </div>
+              </label>
+              <label class="method-item-label">
+                <input type="radio" name="search-target-layer" id="chk-target-vector" value="vector" />
+                <div class="method-item-text">
+                  <strong>벡터 (vector)</strong>
+                  <span>워드 임베딩 벡터 말뭉치 전용 검색 (추후 지원 예정)</span>
                 </div>
               </label>
             </div>
@@ -817,7 +829,7 @@
       <!-- 모달 푸터 -->
       <div class="modal-footer" style="justify-content:space-between; align-items:center;">
         <div id="method-selection-summary" style="font-size:0.84rem; color:#475569;">
-          현재 설정: <strong id="method-modal-summary-text" style="color:#2563eb;">원문 표층 · 기본 텍스트</strong>
+          현재 설정: <strong id="method-modal-summary-text" style="color:#2563eb;">평문 · 기본 텍스트</strong>
         </div>
         <div style="display:flex; gap:8px;">
           <button type="button" class="btn btn-outline" id="btn-cancel-method-modal">닫기</button>

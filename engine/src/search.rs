@@ -849,12 +849,12 @@ pub(crate) fn evaluate_segment_match(
                     if req_start {
                         if let Some(re_anc) = qctx.anchored_regex {
                             if let Some(_) = re_anc.find(w_clean) {
-                                return Some((w_sc, w_ec, "원문/정규식"));
+                                return Some((w_sc, w_ec, "평문/정규식"));
                             }
                         }
                     } else if let Some(re) = qctx.compiled_regex {
                         if let Some(_) = re.find(w_clean) {
-                            return Some((w_sc, w_ec, "원문/정규식"));
+                            return Some((w_sc, w_ec, "평문/정규식"));
                         }
                     }
                 }
@@ -864,7 +864,7 @@ pub(crate) fn evaluate_segment_match(
                         let units = state.normalizer.tokenize_text_units(w_clean);
                         if let Some((sc, _ec)) = find_bracket_query_match(b_tokens, &units) {
                             if !req_start || sc == 0 {
-                                return Some((w_sc, w_ec, "원문/자소"));
+                                return Some((w_sc, w_ec, "평문/자소"));
                             }
                         }
                     }
@@ -888,7 +888,7 @@ pub(crate) fn evaluate_segment_match(
                         if qctx.has_trailing_space && orig_end < w_clean.chars().count() {
                             continue;
                         }
-                        return Some((w_sc, w_ec, "원문/음절"));
+                        return Some((w_sc, w_ec, "평문"));
                     }
                 }
             }
@@ -915,11 +915,11 @@ pub(crate) fn evaluate_segment_match(
                             continue;
                         }
                         let end_c = start_c + display_text[m.start()..m.end()].chars().count();
-                        return Some((start_c, end_c, "원문/정규식"));
+                        return Some((start_c, end_c, "평문/정규식"));
                     }
                     if !req_start {
                         if let Some(_m) = re.find(text_nfd_norm) {
-                            return Some((0, display_chars.len().min(8), "원문/정규식(NFD)"));
+                            return Some((0, display_chars.len().min(8), "평문/정규식(NFD)"));
                         }
                     }
                 }
@@ -937,7 +937,7 @@ pub(crate) fn evaluate_segment_match(
                             if consumed > 0 {
                                 let sc = units[start_u].start_char;
                                 let ec = units[start_u + consumed - 1].end_char;
-                                return Some((sc, ec, "원문/자소"));
+                                return Some((sc, ec, "평문/자소"));
                             }
                         }
                     }
@@ -969,7 +969,7 @@ pub(crate) fn evaluate_segment_match(
                     ) {
                         continue;
                     }
-                    return Some((orig_start, orig_end, "원문/음절"));
+                    return Some((orig_start, orig_end, "평문"));
                 }
                 if text_raw.contains(qctx.core_query) {
                     if let Some(byte_pos) = display_text.find(qctx.core_query) {
@@ -984,10 +984,10 @@ pub(crate) fn evaluate_segment_match(
                                 qctx.has_trailing_space,
                             )
                         {
-                            return Some((sc, ec, "원문(PUA)"));
+                            return Some((sc, ec, "평문(PUA)"));
                         }
                     } else if !req_start && !qctx.has_leading_space && !qctx.has_trailing_space {
-                        return Some((0, display_chars.len().min(6), "원문(PUA)"));
+                        return Some((0, display_chars.len().min(6), "평문(PUA)"));
                     }
                 }
             }
@@ -1001,9 +1001,9 @@ pub(crate) fn evaluate_segment_match(
             qctx,
             display_text,
             morph_flat,
-            "형태분석",
-            "형태소/자소",
-            "형태소/정규식",
+            "형태",
+            "형태/자소",
+            "형태/정규식",
         ) {
             return Some(res);
         }
@@ -1016,9 +1016,9 @@ pub(crate) fn evaluate_segment_match(
             qctx,
             display_text,
             sense_flat,
-            "형태의미",
-            "형태의미/자소",
-            "형태의미/정규식",
+            "의미",
+            "의미/자소",
+            "의미/정규식",
         ) {
             return Some(res);
         }
@@ -1035,13 +1035,13 @@ pub(crate) fn evaluate_segment_match(
         };
         if qctx.use_text && !qctx.use_regex && qctx.bracket_tokens.is_none() {
             if syntax_tree.contains(qctx.core_query) {
-                return Some((0, first_word_len(), "구문분석"));
+                return Some((0, first_word_len(), "구문"));
             }
             let syn_compat = state.normalizer.normalize_morph_for_regex(syntax_tree);
             if syn_compat.contains(qctx.core_query)
                 || state.normalizer.normalize_morph_str(syntax_tree).contains(qctx.norm_morph_query)
             {
-                return Some((0, first_word_len(), "구문분석"));
+                return Some((0, first_word_len(), "구문"));
             }
         } else {
             let syn_compat = state.normalizer.normalize_morph_for_regex(syntax_tree);
@@ -1224,11 +1224,12 @@ pub(crate) fn handle_search(
     let methods_param = params.get("methods").map(|s| s.as_str()).unwrap_or("");
     let mode = params.get("mode").map(|s| s.as_str()).unwrap_or("surface");
 
-    // Target layers: single layer by default (surface, morph, sense, syntax)
+    // Target layers: single layer by default (surface: 평문, morph: 형태, sense: 의미, syntax: 구문, vector: 벡터)
     let mut use_surface = false;
     let mut use_morph = false;
     let mut use_sense = false;
     let mut use_syntax = false;
+    let mut use_vector = false;
 
     if !targets_param.is_empty() {
         for t in targets_param.split(',') {
@@ -1237,6 +1238,7 @@ pub(crate) fn handle_search(
                 "morph" => use_morph = true,
                 "sense" => use_sense = true,
                 "syntax" => use_syntax = true,
+                "vector" => use_vector = true,
                 "all" => {
                     use_surface = true;
                     use_morph = true;
@@ -1251,6 +1253,7 @@ pub(crate) fn handle_search(
             "morph" => use_morph = true,
             "sense" => use_sense = true,
             "syntax" => use_syntax = true,
+            "vector" => use_vector = true,
             _ => use_surface = true,
         }
     }
@@ -1286,7 +1289,7 @@ pub(crate) fn handle_search(
         use_regex = true;
     }
 
-    if !use_surface && !use_morph && !use_sense && !use_syntax {
+    if !use_surface && !use_morph && !use_sense && !use_syntax && !use_vector {
         use_surface = true;
     }
     if !use_text && !use_jamo && !use_regex {
@@ -1442,14 +1445,27 @@ pub(crate) fn handle_search(
         }
     }
 
-    // 검색 대상 층위가 '형태소/품사', '형태의미', '구문표지'인 경우 해당 분석 말뭉치 문서들로만 엄격 제한
-    if !use_surface {
+    // 검색 대상 층위(평문, 형태, 의미, 구문, 벡터)에 해당하는 표지를 가진 말뭉치 문서들로만 엄격 제한
+    if use_surface || use_morph || use_sense || use_syntax || use_vector {
         let layer_matched_ids: Vec<String> = doc_meta_map
             .iter()
             .filter(|(_, meta)| {
-                (use_morph && (meta.category.contains("형태") || meta.layers.contains("형태")))
-                    || (use_sense && (meta.category.contains("의미") || meta.layers.contains("의미")))
-                    || (use_syntax && (meta.category.contains("구문") || meta.layers.contains("구문")))
+                let has_plain = meta.layers.contains("평문")
+                    || (meta.layers.contains("원문")
+                        && ((!meta.layers.contains("형태")
+                            && !meta.layers.contains("의미")
+                            && !meta.layers.contains("구문"))
+                            || meta.layers.contains("원문(")));
+                let has_morph = meta.layers.contains("형태") || meta.category.contains("형태");
+                let has_sense = meta.layers.contains("의미") || meta.category.contains("의미");
+                let has_syntax = meta.layers.contains("구문") || meta.category.contains("구문");
+                let has_vector = meta.layers.contains("벡터") || meta.category.contains("벡터");
+
+                (use_surface && has_plain)
+                    || (use_morph && has_morph)
+                    || (use_sense && has_sense)
+                    || (use_syntax && has_syntax)
+                    || (use_vector && has_vector)
             })
             .map(|(id, _)| id.clone())
             .collect();
@@ -1536,6 +1552,7 @@ pub(crate) fn handle_search(
         && !use_morph
         && !use_sense
         && !use_syntax
+        && !use_vector
     {
         let like_tok = if search_unit == "text" && core_query.contains(' ') {
             core_query.split_whitespace().next().unwrap_or(core_query)
@@ -1656,7 +1673,7 @@ pub(crate) fn handle_search(
                 if hits.len() < limit {
                     let (doc_title, corpus_category, annotation_layers) = match doc_meta_map.get(&doc_id) {
                         Some(m) => (m.title.clone(), m.category.clone(), m.layers.clone()),
-                        None => (doc_id.clone(), "원시 말뭉치".to_string(), "원문".to_string()),
+                        None => (doc_id.clone(), "평문 말뭉치".to_string(), "평문".to_string()),
                     };
                     let first_word_len = display_text
                         .split_whitespace()
@@ -1684,13 +1701,15 @@ pub(crate) fn handle_search(
                         r_trunc,
                     );
                     let browse_layer = if !use_surface && use_morph {
-                        "형태분석 열람"
+                        "형태 열람"
                     } else if !use_surface && use_sense {
-                        "형태의미 열람"
+                        "의미 열람"
                     } else if !use_surface && use_syntax {
-                        "구문분석 열람"
+                        "구문 열람"
+                    } else if !use_surface && use_vector {
+                        "벡터 열람"
                     } else {
-                        "문서 열람"
+                        "평문 열람"
                     };
                     hits.push(SearchHit {
                         segment_id,
@@ -1754,7 +1773,7 @@ pub(crate) fn handle_search(
                 if hits.len() < limit {
                     let (doc_title, corpus_category, annotation_layers) = match doc_meta_map.get(&doc_id) {
                         Some(m) => (m.title.clone(), m.category.clone(), m.layers.clone()),
-                        None => (doc_id.clone(), "원시 말뭉치".to_string(), "원문".to_string()),
+                        None => (doc_id.clone(), "평문 말뭉치".to_string(), "평문".to_string()),
                     };
                     let (raw_left, node, raw_right, w_cnt, rw_cnt, l_trunc, r_trunc) =
                         extract_kwic_by_word_count(
@@ -1866,6 +1885,7 @@ pub(crate) fn handle_search_stream(
         let mut use_morph = false;
         let mut use_sense = false;
         let mut use_syntax = false;
+        let mut use_vector = false;
 
         if !targets_param.is_empty() {
             for t in targets_param.split(',') {
@@ -1874,6 +1894,7 @@ pub(crate) fn handle_search_stream(
                     "morph" => use_morph = true,
                     "sense" => use_sense = true,
                     "syntax" => use_syntax = true,
+                    "vector" => use_vector = true,
                     "all" => {
                         use_surface = true;
                         use_morph = true;
@@ -1888,6 +1909,7 @@ pub(crate) fn handle_search_stream(
                 "morph" => use_morph = true,
                 "sense" => use_sense = true,
                 "syntax" => use_syntax = true,
+                "vector" => use_vector = true,
                 _ => use_surface = true,
             }
         }
@@ -1922,7 +1944,7 @@ pub(crate) fn handle_search_stream(
             use_regex = true;
         }
 
-        if !use_surface && !use_morph && !use_sense && !use_syntax {
+        if !use_surface && !use_morph && !use_sense && !use_syntax && !use_vector {
             use_surface = true;
         }
         if !use_text && !use_jamo && !use_regex {
@@ -2044,14 +2066,27 @@ pub(crate) fn handle_search_stream(
             }
         }
 
-        // 검색 대상 층위가 '형태소/품사', '형태의미', '구문표지'인 경우 해당 분석 말뭉치 문서들로만 엄격 제한
-        if !use_surface {
+        // 검색 대상 층위(평문, 형태, 의미, 구문, 벡터)에 해당하는 표지를 가진 말뭉치 문서들로만 엄격 제한
+        if use_surface || use_morph || use_sense || use_syntax || use_vector {
             let layer_matched_ids: Vec<String> = doc_meta_map
                 .iter()
                 .filter(|(_, meta)| {
-                    (use_morph && (meta.category.contains("형태") || meta.layers.contains("형태")))
-                        || (use_sense && (meta.category.contains("의미") || meta.layers.contains("의미")))
-                        || (use_syntax && (meta.category.contains("구문") || meta.layers.contains("구문")))
+                    let has_plain = meta.layers.contains("평문")
+                        || (meta.layers.contains("원문")
+                            && ((!meta.layers.contains("형태")
+                                && !meta.layers.contains("의미")
+                                && !meta.layers.contains("구문"))
+                                || meta.layers.contains("원문(")));
+                    let has_morph = meta.layers.contains("형태") || meta.category.contains("형태");
+                    let has_sense = meta.layers.contains("의미") || meta.category.contains("의미");
+                    let has_syntax = meta.layers.contains("구문") || meta.category.contains("구문");
+                    let has_vector = meta.layers.contains("벡터") || meta.category.contains("벡터");
+
+                    (use_surface && has_plain)
+                        || (use_morph && has_morph)
+                        || (use_sense && has_sense)
+                        || (use_syntax && has_syntax)
+                        || (use_vector && has_vector)
                 })
                 .map(|(id, _)| id.clone())
                 .collect();
@@ -2255,7 +2290,7 @@ pub(crate) fn handle_search_stream(
                     returned_count += 1;
                     let (doc_title, corpus_category, annotation_layers) = match doc_meta_map.get(&doc_id) {
                         Some(m) => (m.title.clone(), m.category.clone(), m.layers.clone()),
-                        None => (doc_id.clone(), "원시 말뭉치".to_string(), "원문".to_string()),
+                        None => (doc_id.clone(), "평문 말뭉치".to_string(), "평문".to_string()),
                     };
 
                     let first_word_len = display_text
@@ -2284,13 +2319,15 @@ pub(crate) fn handle_search_stream(
                         r_trunc,
                     );
                     let browse_layer = if !use_surface && use_morph {
-                        "형태분석 열람"
+                        "형태 열람"
                     } else if !use_surface && use_sense {
-                        "형태의미 열람"
+                        "의미 열람"
                     } else if !use_surface && use_syntax {
-                        "구문분석 열람"
+                        "구문 열람"
+                    } else if !use_surface && use_vector {
+                        "벡터 열람"
                     } else {
-                        "문서 열람"
+                        "평문 열람"
                     };
                     let hit = SearchHit {
                         segment_id,
@@ -2367,7 +2404,7 @@ pub(crate) fn handle_search_stream(
                     returned_count += 1;
                     let (doc_title, corpus_category, annotation_layers) = match doc_meta_map.get(&doc_id) {
                         Some(m) => (m.title.clone(), m.category.clone(), m.layers.clone()),
-                        None => (doc_id.clone(), "원시 말뭉치".to_string(), "원문".to_string()),
+                        None => (doc_id.clone(), "평문 말뭉치".to_string(), "평문".to_string()),
                     };
 
                     let (raw_left, node, raw_right, w_cnt, rw_cnt, l_trunc, r_trunc) =

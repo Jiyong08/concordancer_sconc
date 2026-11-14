@@ -35,6 +35,7 @@ let isSearchInProgress = false;
   const chkTargetMorph = document.getElementById('chk-target-morph');
   const chkTargetSense = document.getElementById('chk-target-sense');
   const chkTargetSyntax = document.getElementById('chk-target-syntax');
+  const chkTargetVector = document.getElementById('chk-target-vector');
 
   const chkMethodJamo = document.getElementById('chk-method-jamo');
   const chkMethodRegex = document.getElementById('chk-method-regex');
@@ -467,10 +468,11 @@ let isSearchInProgress = false;
       if (selectLayer) selectLayer.value = layer;
 
       // Sync single-select target radio & method checkboxes with preset mode
-      if (chkTargetSurface) chkTargetSurface.checked = (mode !== 'morph' && mode !== 'sense' && mode !== 'syntax');
+      if (chkTargetSurface) chkTargetSurface.checked = (mode !== 'morph' && mode !== 'sense' && mode !== 'syntax' && mode !== 'vector');
       if (chkTargetMorph) chkTargetMorph.checked = (mode === 'morph');
       if (chkTargetSense) chkTargetSense.checked = (mode === 'sense');
       if (chkTargetSyntax) chkTargetSyntax.checked = (mode === 'syntax');
+      if (chkTargetVector) chkTargetVector.checked = (mode === 'vector');
       if (chkMethodJamo) chkMethodJamo.checked = (mode === 'jamo' || (q.includes('[') && q.includes(']') && q.includes('/')));
       if (chkMethodRegex) chkMethodRegex.checked = (mode === 'regex');
       updateSearchMethodSummaryLabel();
@@ -889,14 +891,24 @@ let isSearchInProgress = false;
         }
 
         const badges = [];
+        const layerText = item.doc.annotation_layers || '';
         if (item.doc.corpus_category && item.doc.corpus_category.includes('옛한글')) {
           badges.push('<span class="layer-badge badge-old" style="font-size:0.68rem; padding:1px 5px;">옛한글</span>');
         }
-        if (item.doc.annotation_layers && item.doc.annotation_layers.includes('형태')) {
+        if (layerText.includes('평문') || (layerText.includes('원문') && !layerText.includes('형태') && !layerText.includes('의미') && !layerText.includes('구문')) || layerText.includes('원문(')) {
+          badges.push('<span class="layer-badge badge-old" style="font-size:0.68rem; padding:1px 5px;">평문</span>');
+        }
+        if (layerText.includes('형태')) {
           badges.push('<span class="layer-badge badge-morph" style="font-size:0.68rem; padding:1px 5px;">형태</span>');
         }
-        if (item.doc.annotation_layers && item.doc.annotation_layers.includes('3중')) {
-          badges.push('<span class="layer-badge badge-syntax" style="font-size:0.68rem; padding:1px 5px;">3중연동</span>');
+        if (layerText.includes('의미')) {
+          badges.push('<span class="layer-badge badge-sense" style="font-size:0.68rem; padding:1px 5px;">의미</span>');
+        }
+        if (layerText.includes('구문')) {
+          badges.push('<span class="layer-badge badge-syntax" style="font-size:0.68rem; padding:1px 5px;">구문</span>');
+        }
+        if (layerText.includes('벡터')) {
+          badges.push('<span class="layer-badge badge-syntax" style="font-size:0.68rem; padding:1px 5px;">벡터</span>');
         }
 
         html += `
@@ -1294,6 +1306,7 @@ let isSearchInProgress = false;
       if (chkTargetMorph) chkTargetMorph.checked = (tab.targets === 'morph');
       if (chkTargetSense) chkTargetSense.checked = (tab.targets === 'sense');
       if (chkTargetSyntax) chkTargetSyntax.checked = (tab.targets === 'syntax');
+      if (chkTargetVector) chkTargetVector.checked = (tab.targets === 'vector');
       updateSearchMethodSummaryLabel();
     }
     if (tab.docIds) {
@@ -1499,10 +1512,10 @@ let isSearchInProgress = false;
       '핵심어(Node)',
       '우측문맥(RightContext)',
       '일치층위',
-      '원문(유니코드)',
-      '형태소분석',
-      '형태의미분석',
-      '구문분석',
+      '평문',
+      '형태',
+      '의미',
+      '구문',
     ];
 
     const lines = [headers.join('\t')];
@@ -1865,8 +1878,8 @@ let isSearchInProgress = false;
           if (builderSummaryBanner) {
             const rawOnlyNoticeHtml = rawOnlyCount > 0 ? `
               <div style="margin-top:10px; padding:10px 12px; border-radius:6px; background:#fff7ed; border:1px solid #fdba74; color:#9a3412; font-size:0.92em; line-height:1.5;">
-                <strong>ℹ️ 원문 전용 DB 구축 안내 (${rawOnlyCount}개 파일):</strong><br/>
-                지원되는 주석 말뭉치 형식(세종·학습자·국어원 JSON 등)과 달라 형태·의미·구문 분석 층위 DB는 생성하지 않고 <strong>원문 말뭉치 DB만</strong> 구축했습니다.<br/>
+                <strong>ℹ️ 평문 전용 DB 구축 안내 (${rawOnlyCount}개 파일):</strong><br/>
+                지원되는 주석 말뭉치 형식(세종·학습자·국어원 JSON 등)과 달라 형태·의미·구문·벡터 층위 DB는 생성하지 않고 <strong>평문 말뭉치 DB만</strong> 구축했습니다.<br/>
                 <span style="word-break:break-all;">대상 파일: <code>${escapeHtml(rawOnlyFiles.join(', '))}</code></span>
               </div>
             ` : '';
@@ -1885,7 +1898,7 @@ let isSearchInProgress = false;
                 <td><code><strong>${escapeHtml(item.doc_id)}</strong></code></td>
                 <td>
                   <span class="layer-badge badge-old">${escapeHtml(item.type)}</span>
-                  ${item.raw_only ? '<span class="layer-badge" style="margin-left:4px; background:#ffedd5; color:#9a3412; border:1px solid #fdba74;">원문 전용 · 주석 미생성</span>' : ''}
+                  ${item.raw_only ? '<span class="layer-badge" style="margin-left:4px; background:#ffedd5; color:#9a3412; border:1px solid #fdba74;">평문 전용 · 주석 미생성</span>' : ''}
                 </td>
                 <td><code>${escapeHtml((item.files || []).join(', '))}</code></td>
                 <td style="text-align:right; font-weight:700;">${(item.sentences || 0).toLocaleString()}문장</td>
@@ -1897,7 +1910,7 @@ let isSearchInProgress = false;
           // [핵심] 구축된 DB를 즉시 반영하여 '문서지정' 탭과 검색기 목록 새로고침
           await loadOverview();
           const rawOnlyAlert = rawOnlyCount > 0
-            ? `\n\n[안내] 지원되는 주석 형식과 다른 ${rawOnlyCount}개 파일(${rawOnlyFiles.join(', ')})은 형태·의미·구문 분석 DB를 생성하지 않고 원문 말뭉치 DB만 구축했습니다.`
+            ? `\n\n[안내] 지원되는 주석 형식과 다른 ${rawOnlyCount}개 파일(${rawOnlyFiles.join(', ')})은 형태·의미·구문·벡터 DB를 생성하지 않고 평문 말뭉치 DB만 구축했습니다.`
             : '';
           alert(`🎉 데이터베이스 생성이 완료되었습니다!\n\n총 ${prog.total_files || 0}개 파일 중 ${docsCount}개 말뭉치 (${sents}문장)가 DB에 성공적으로 등록되었습니다.\n지금 바로 검색하거나 '문서지정' 탭에서 확인하실 수 있습니다.${rawOnlyAlert}`);
         } else if (prog.status === 'ERROR') {
@@ -1998,6 +2011,7 @@ let isSearchInProgress = false;
     if (chkTargetMorph && chkTargetMorph.checked) return ['morph'];
     if (chkTargetSense && chkTargetSense.checked) return ['sense'];
     if (chkTargetSyntax && chkTargetSyntax.checked) return ['syntax'];
+    if (chkTargetVector && chkTargetVector.checked) return ['vector'];
     return ['surface'];
   }
 
@@ -2018,10 +2032,11 @@ let isSearchInProgress = false;
     const targets = getSelectedSearchTargets();
     const methods = getSelectedSearchMethods();
 
-    let targetStr = '원문 표층';
-    if (targets.includes('morph')) targetStr = '형태소/품사';
-    else if (targets.includes('sense')) targetStr = '형태의미';
-    else if (targets.includes('syntax')) targetStr = '구문표지';
+    let targetStr = '평문';
+    if (targets.includes('morph')) targetStr = '형태';
+    else if (targets.includes('sense')) targetStr = '의미';
+    else if (targets.includes('syntax')) targetStr = '구문';
+    else if (targets.includes('vector')) targetStr = '벡터';
 
     let methodStr = '기본';
     const hasJamo = methods.includes('jamo');
@@ -2073,7 +2088,7 @@ let isSearchInProgress = false;
     }
 
     // Radio & checkbox change handlers
-    [chkTargetSurface, chkTargetMorph, chkTargetSense, chkTargetSyntax,
+    [chkTargetSurface, chkTargetMorph, chkTargetSense, chkTargetSyntax, chkTargetVector,
      chkMethodJamo, chkMethodRegex].forEach((chk) => {
       if (chk) {
         chk.addEventListener('change', () => {
@@ -2107,17 +2122,24 @@ let isSearchInProgress = false;
   // KWIC 테이블 행 생성 헬퍼
   function createKwicRowHtml(h) {
     const badges = [];
+    const hitLayers = h.annotation_layers || '';
     if (h.corpus_category && h.corpus_category.includes('옛한글')) {
       badges.push('<span class="layer-badge badge-old">옛한글</span>');
     }
-    if (h.has_morph) {
+    if (hitLayers.includes('평문') || (hitLayers.includes('원문') && !hitLayers.includes('형태') && !hitLayers.includes('의미') && !hitLayers.includes('구문')) || hitLayers.includes('원문(')) {
+      badges.push('<span class="layer-badge badge-old">평문</span>');
+    }
+    if (h.has_morph || hitLayers.includes('형태')) {
       badges.push('<span class="layer-badge badge-morph">형태</span>');
     }
-    if (h.has_sense) {
+    if (h.has_sense || hitLayers.includes('의미')) {
       badges.push('<span class="layer-badge badge-sense">의미</span>');
     }
-    if (h.has_syntax) {
+    if (h.has_syntax || hitLayers.includes('구문')) {
       badges.push('<span class="layer-badge badge-syntax">구문</span>');
+    }
+    if (hitLayers.includes('벡터')) {
+      badges.push('<span class="layer-badge badge-syntax">벡터</span>');
     }
     const loc = h.page_ref
       ? `${h.doc_id} (${h.page_ref})`

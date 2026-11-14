@@ -901,12 +901,103 @@ mod tests {
 
         let layer_cnt: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM documents WHERE annotation_layers != '원문'",
+                "SELECT COUNT(*) FROM documents WHERE annotation_layers != '평문'",
                 [],
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(layer_cnt, 0, "모든 문서는 '원문' 층위로만 등록되어야 함");
+        assert_eq!(layer_cnt, 0, "모든 문서는 '평문' 층위로만 등록되어야 함");
+
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn test_morph_only_excluded_from_plain_search() {
+        use crate::builder::build_paths_into_db_native;
+        use crate::normalizer::Normalizer;
+        use crate::search::handle_search;
+        use crate::DbBuildManager;
+        use rusqlite::Connection;
+        use std::collections::HashMap;
+        use std::sync::{Arc, Mutex};
+
+        let tmp_dir = std::env::temp_dir().join(format!(
+            "sconc_morph_only_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+
+        let xml_path = tmp_dir.join("learner_morph_only.xml");
+        std::fs::write(
+            &xml_path,
+            r#"<?xml version="1.0" encoding="utf-8"?>
+<LearnerCorpus>
+  <SENTENCE>
+    <s>사과가 맛있다.</s>
+    <word><w>사과가</w><morph pos="NNG">사과</morph><morph pos="JKS">가</morph></word>
+    <word><w>맛있다.</w><morph pos="VA">맛있</morph><morph pos="EF">다</morph></word>
+  </SENTENCE>
+</LearnerCorpus>"#,
+        )
+        .unwrap();
+
+        let db_path = tmp_dir.join("test_morph_only.corpdb");
+        let norm = Normalizer::new(&tmp_dir.join("nonexistent_pua.json"));
+        let mgr = Arc::new(Mutex::new(DbBuildManager::new()));
+        mgr.lock().unwrap().progress.is_running = true;
+
+        build_paths_into_db_native(&[xml_path], &db_path, &norm, &mgr).unwrap();
+
+        let conn = Connection::open(&db_path).unwrap();
+        let layers: String = conn
+            .query_row("SELECT annotation_layers FROM documents LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(layers, "형태", "원본 평문 없는 형태분석 파일은 '형태' 표지만 가져야 함");
+
+        let state = AppState {
+            db_path: db_path.clone(),
+            web_dir: PathBuf::from("../web"),
+            root_dir: tmp_dir.clone(),
+            hanbatang_path: PathBuf::from(""),
+            kopub_ttf_path: PathBuf::from(""),
+            kopub_otf_path: PathBuf::from(""),
+            normalizer: norm,
+            memory_profile: MemoryProfile::detect(),
+            latest_search_seq: AtomicU64::new(0),
+            cancel_search_seq: AtomicU64::new(0),
+            db_builder: mgr,
+            last_pick_folder: Arc::new(Mutex::new(None)),
+            port: 8787,
+        };
+
+        // 1. 평문 검색 시 제외되어야 함
+        let mut p_plain = HashMap::new();
+        p_plain.insert("q".to_string(), "사과".to_string());
+        p_plain.insert("targets".to_string(), "surface".to_string());
+        let res_plain = handle_search(&state, &p_plain);
+        let json_plain: serde_json::Value = serde_json::from_slice(res_plain.body()).unwrap();
+        assert_eq!(
+            json_plain["hits"].as_array().map(|a| a.len()),
+            Some(0),
+            "형태 전용 DB는 평문 검색 대상에서 제외되어야 함 (got: {})",
+            json_plain
+        );
+
+        // 2. 형태 검색 시 검색되어야 함
+        let mut p_morph = HashMap::new();
+        p_morph.insert("q".to_string(), "사과/NNG".to_string());
+        p_morph.insert("targets".to_string(), "morph".to_string());
+        let res_morph = handle_search(&state, &p_morph);
+        let json_morph: serde_json::Value = serde_json::from_slice(res_morph.body()).unwrap();
+        assert_eq!(
+            json_morph["hits"].as_array().map(|a| a.len()),
+            Some(1),
+            "형태 전용 DB는 형태 검색 시 검색되어야 함 (got: {})",
+            json_morph
+        );
 
         let _ = std::fs::remove_dir_all(&tmp_dir);
     }

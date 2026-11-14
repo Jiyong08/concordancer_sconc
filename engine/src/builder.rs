@@ -2093,10 +2093,7 @@ pub fn build_paths_into_db_native(
                 author: "국립국어원".to_string(),
                 pub_year: "1993".to_string(),
                 corpus_category: "다층 통합 말뭉치 (형태+의미+구문)".to_string(),
-                annotation_layers: format!(
-                    "원문 + 형태소분석(BT{}) + 어휘의미분석(BS{}) + 구문분석(BG{})",
-                    code, code, code
-                ),
+                annotation_layers: "형태 + 의미 + 구문".to_string(),
                 source_files_list: format!("{}, {}, {}", bt_name, bs_name, bg_name),
                 sentence_count: segs.len(),
                 eojeol_count: ej_sum,
@@ -2237,8 +2234,8 @@ pub fn build_paths_into_db_native(
                 ),
                 author: format!("{} 학습자 ({})", nat, grade),
                 pub_year: "2020".to_string(),
-                corpus_category: "학습자 말뭉치 (원문+형태 통합)".to_string(),
-                annotation_layers: format!("원문({}) + 형태소분석({})", tf_name, xf_name),
+                corpus_category: "학습자 말뭉치 (평문+형태 통합)".to_string(),
+                annotation_layers: "평문 + 형태".to_string(),
                 source_files_list: format!("{}, {}", tf_name, xf_name),
                 sentence_count: segs.len(),
                 eojeol_count: ej_sum,
@@ -2334,21 +2331,21 @@ pub fn build_paths_into_db_native(
         if head_slice.contains("<c><g>") && head_slice.contains("<m>") && head_slice.contains("<s>") {
             if let Ok((s, _)) = parse_dictionary_xml(f, norm) {
                 segs = s;
-                ctype = "어휘/자석 말뭉치 (옛한글)".to_string();
+                ctype = "평문 말뭉치 (옛한글 어휘/자석)".to_string();
                 tformat = "Custom XML (<c><g><m><s>)".to_string();
                 raw_desc = "<g>한자, <m>훈(한양PUA/유니코드), <s>음 분리 표기".to_string();
                 ana_desc = "자석(훈/음) 구조화 태그 및 한양 PUA→유니코드 변환".to_string();
-                layers = "자석(한자·훈·음) + 옛한글 유니코드 변환".to_string();
+                layers = "평문".to_string();
                 title = format!("{} (옛한글 사전/자석)", stem);
             }
         } else if head_slice.contains("<sent ") && head_slice.contains("</sent>") {
             if let Ok((s, _)) = parse_sent_xml(f, norm) {
                 segs = s;
-                ctype = "원시/대역 말뭉치 (옛한글)".to_string();
+                ctype = "평문 말뭉치 (옛한글 문헌)".to_string();
                 tformat = "Custom XML (<doc><sent>)".to_string();
                 raw_desc = "<sent type=\"...\" lang=\"kor|chi|jap\" page=\"...\"> 내 원문 표기".to_string();
                 ana_desc = "장차(page), 언어(lang) 메타 속성 및 옛한글 변환".to_string();
-                layers = "원문(한양PUA→유니코드 변환) + 장차/언어 메타".to_string();
+                layers = "평문".to_string();
                 title = format!("{} (옛한글 문헌)", stem);
             }
         } else if head_slice.contains("<Korean_Learners_Corpus")
@@ -2363,7 +2360,7 @@ pub fn build_paths_into_db_native(
                 tformat = "LearnerCorpus XML".to_string();
                 raw_desc = "<SENTENCE><s> 및 <word><w> 태그".to_string();
                 ana_desc = "<morph pos=\"...\"> 형태소 주석".to_string();
-                layers = "원문 + 형태소분석".to_string();
+                layers = "형태".to_string();
                 title = format!("{} ({} - {}/{})", stem, theme, nat, grade);
             }
         } else if ext == "json" && head_slice.contains("\"document\"") {
@@ -2374,15 +2371,15 @@ pub fn build_paths_into_db_native(
                     tformat = "NIKL JSON (sentence/word/morpheme)".to_string();
                     raw_desc = "sentence[].form에 원문 표기".to_string();
                     ana_desc = "sentence[].morpheme[] 배열에 형태소/품사 표기".to_string();
-                    layers = "원문 + 형태소분석(JSON)".to_string();
+                    layers = "형태".to_string();
                     title = format!("{} (형태분석 JSON)", stem);
                 } else {
-                    ctype = "원시 말뭉치 (모두의 말뭉치 JSON)".to_string();
+                    ctype = "평문 말뭉치 (모두의 말뭉치 JSON)".to_string();
                     tformat = "NIKL JSON (paragraph/utterance)".to_string();
                     raw_desc = "paragraph[].form에 문단 원문 표기".to_string();
                     ana_desc = "없음 (문서 메타데이터 포함)".to_string();
-                    layers = "원문 + 문서메타".to_string();
-                    title = format!("{} (원시 JSON)", stem);
+                    layers = "평문".to_string();
+                    title = format!("{} (평문 JSON)", stem);
                 }
             }
         } else if (upper_fname.starts_with("5CT_") && head_slice.contains('\t'))
@@ -2390,11 +2387,11 @@ pub fn build_paths_into_db_native(
         {
             if let Ok((s, _)) = parse_sejong_spoken_morph(f, norm) {
                 segs = s;
-                ctype = "구어 형태 분석 말뭉치 (세종 구어)".to_string();
+                ctype = "형태 분석 말뭉치 (세종 구어)".to_string();
                 tformat = "TEI.2 SGML/XML + TSV (3열)".to_string();
                 raw_desc = "어절ID \\t 어절원문 \\t 형태소분석 표기".to_string();
                 ana_desc = "3번째 열에 '형태소/품사 + ...' 표기".to_string();
-                layers = "구어전사 원문 + 형태소분석 + 화자정보".to_string();
+                layers = "형태".to_string();
                 title = format!("{} (세종 구어 형태분석)", stem);
             }
         } else if (upper_fname.starts_with("4CM_") && head_slice.contains("<s n="))
@@ -2402,12 +2399,12 @@ pub fn build_paths_into_db_native(
         {
             if let Ok((s, _)) = parse_sejong_spoken_raw(f, norm) {
                 segs = s;
-                ctype = "구어 전사 원시 말뭉치 (세종 구어)".to_string();
+                ctype = "평문 말뭉치 (세종 구어)".to_string();
                 tformat = "TEI.2 SGML/XML (<u who><s n>)".to_string();
                 raw_desc = "<s n=\"번호\"> 내 구어 발화문 및 <phon> 억양 표기".to_string();
                 ana_desc = "화자(who) 및 발화 번호 태그".to_string();
-                layers = "구어전사 원문 + 화자/억양 표지".to_string();
-                title = format!("{} (세종 구어 원시)", stem);
+                layers = "평문".to_string();
+                title = format!("{} (세종 구어 평문)", stem);
             }
         } else if (upper_fname.starts_with("BG") && head_slice.contains("(S"))
             || (head_slice.contains("(S") && head_slice.contains("\n;"))
@@ -2420,7 +2417,7 @@ pub fn build_paths_into_db_native(
                 tformat = "TEI.2 SGML/XML + S-식 구문 트리".to_string();
                 raw_desc = "세미콜론('; ')으로 시작하는 주석 행에 문장 원문 표기".to_string();
                 ana_desc = "소괄호 중첩 S-식 트리 구문 표지".to_string();
-                layers = "원문 + 구문분석(S-Expression)".to_string();
+                layers = "구문".to_string();
                 title = format!("{} (세종 구문분석)", stem);
             }
         } else if (upper_fname.starts_with("BS") && head_slice.contains('\t') && head_slice.contains("__"))
@@ -2430,11 +2427,11 @@ pub fn build_paths_into_db_native(
             // 세종 형태의미분석 단독 파일 (BS*.txt 등)
             if let Ok((s, _)) = parse_sejong_morph_or_sense_tsv(f, true, norm) {
                 segs = s;
-                ctype = "형태의미 분석 말뭉치 (세종 문어)".to_string();
+                ctype = "의미 분석 말뭉치 (세종 문어)".to_string();
                 tformat = "TEI.2 SGML/XML + TSV (3열)".to_string();
                 raw_desc = "어절ID \\t 어절원문 \\t 의미분석 표기".to_string();
                 ana_desc = "표준국어대사전 어깨번호 '__01/NNG' 표기".to_string();
-                layers = "원문 + 형태의미분석(어깨번호)".to_string();
+                layers = "의미".to_string();
                 title = format!("{} (세종 형태의미분석)", stem);
             }
         } else if (upper_fname.starts_with("BT") && head_slice.contains('\t') && head_slice.contains('/'))
@@ -2448,7 +2445,7 @@ pub fn build_paths_into_db_native(
                 tformat = "TEI.2 SGML/XML + TSV (3열)".to_string();
                 raw_desc = "어절ID \\t 어절원문 \\t 형태소분석 표기".to_string();
                 ana_desc = "3번째 열에 '형태소/품사 + ...' 표기".to_string();
-                layers = "원문 + 형태소분석".to_string();
+                layers = "형태".to_string();
                 title = format!("{} (세종 문어 형태분석)", stem);
             }
         } else if lower_head.contains("<tei.2>") || lower_head.contains("<body") {
@@ -2459,34 +2456,34 @@ pub fn build_paths_into_db_native(
                     tformat = "TEI.2 SGML/XML + TSV".to_string();
                     raw_desc = "<p>, <head> 내 어절원문 표기".to_string();
                     ana_desc = "형태소/품사 표기".to_string();
-                    layers = "원문 + 형태소분석".to_string();
+                    layers = "형태".to_string();
                     title = format!("{} (세종 문어 형태분석)", stem);
                 } else {
-                    ctype = "문어 원시 말뭉치 (세종 문어)".to_string();
+                    ctype = "평문 말뭉치 (세종 문어)".to_string();
                     tformat = "TEI.2 SGML/XML (<head><p><page>)".to_string();
                     raw_desc = "<p>, <head> 태그 내 문단/문장 원문 표기".to_string();
                     ana_desc = "출전 지면(<page>), 날짜(<date>) 구조 태그".to_string();
-                    layers = "원문 + 지면/제목 구조태그".to_string();
-                    title = format!("{} (세종 문어 원시)", stem);
+                    layers = "평문".to_string();
+                    title = format!("{} (세종 문어 평문)", stem);
                 }
             }
         }
 
-        // 알려진 특화 파서에서 문장이 추출되지 않은 경우(샘플과 다른 형식의 파일), 원문 평문 파서로 안전 폴백
+        // 알려진 특화 파서에서 문장이 추출되지 않은 경우(샘플과 다른 형식의 파일), 평문 파서로 안전 폴백
         if segs.is_empty() {
             if let Ok((s, _)) = parse_plain_or_script(f, norm) {
                 segs = s;
                 let has_old = segs.iter().any(|x| contains_old_hangul_jamo(&x.text_unicode));
                 ctype = if has_old {
-                    "일반 텍스트 말뭉치 (옛한글)".to_string()
+                    "평문 말뭉치 (옛한글)".to_string()
                 } else {
-                    "원시 말뭉치 (원문 전용)".to_string()
+                    "평문 말뭉치".to_string()
                 };
-                tformat = "Plain Text (원문 전용 폴백)".to_string();
-                raw_desc = "줄바꿈 단위 원문 평문 표기".to_string();
-                ana_desc = "없음 (원문 말뭉치 DB만 구축)".to_string();
-                layers = "원문".to_string();
-                title = format!("{} (원문 전용)", stem);
+                tformat = "Plain Text (평문 전용 폴백)".to_string();
+                raw_desc = "줄바꿈 단위 평문 텍스트 표기".to_string();
+                ana_desc = "없음 (평문 말뭉치 DB만 구축)".to_string();
+                layers = "평문".to_string();
+                title = format!("{} (평문)", stem);
             }
         }
 
@@ -2512,15 +2509,15 @@ pub fn build_paths_into_db_native(
                 || layers.contains("의미")
                 || layers.contains("구문")
             {
-                ctype = "원시 말뭉치 (원문 전용)".to_string();
-                layers = "원문".to_string();
-                ana_desc = "없음 (원문 말뭉치 DB만 구축)".to_string();
+                ctype = "평문 말뭉치".to_string();
+                layers = "평문".to_string();
+                ana_desc = "없음 (평문 말뭉치 DB만 구축)".to_string();
             }
             raw_only_files.push(fname.clone());
             push_log(
                 db_builder,
                 format!(
-                    "ℹ️ [원문 전용 구축] {}: 알려진 형태·의미·구문 주석 형식이 아니므로 원문 말뭉치 DB만 생성했습니다.",
+                    "ℹ️ [평문 전용 구축] {}: 알려진 형태·의미·구문 주석 형식이 아니므로 평문 말뭉치 DB만 생성했습니다.",
                     fname
                 ),
             );
